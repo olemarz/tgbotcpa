@@ -1,14 +1,15 @@
 import { Pool } from 'pg';
 import { config } from '../config.js';
 
-export const pool = new Pool({ connectionString: config.dbUrl });
+const pool = new Pool({ connectionString: config.dbUrl });
 
 export async function query(q, params) {
   const client = await pool.connect();
   try {
-    const res = await client.query(q, params);
-    return res;
+    return await client.query(q, params);
   } finally {
     client.release();
   }
 }
+
+export { pool };

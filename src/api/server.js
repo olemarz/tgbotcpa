@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
 import { config } from '../config.js';
@@ -6,6 +7,10 @@ import { uuid, shortToken } from '../util/id.js';
 import { hmacSHA256Hex } from '../util/hmac.js';
 import axios from 'axios';
 import { bot, webhookCallback } from '../bot/telegraf.js';
+
+// simple UUID validator
+const isUUID = s =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 
 const app = express();
 app.use(bodyParser.json());
@@ -20,6 +25,10 @@ app.post('/bot/webhook', webhookCallback);
 // Click endpoint -> save click, create start token, redirect to bot
 app.get('/click/:offerId', async (req, res) => {
   const offerId = req.params.offerId;
+// вернуть 400, если передали не UUID (например /click/123)
+  if (!isUUID(offerId)) {
+    return res.status(400).send('offer_id must be UUID');
+  }
   const uid = (req.query.sub || req.query.uid || req.query.click_id || '').toString();
   const subs = { ...req.query };
   if (!uid) return res.status(400).send('Missing click_id/sub');
