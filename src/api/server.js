@@ -14,8 +14,61 @@ const isUUID = s =>
 
 const app = express();
 app.use(bodyParser.json());
+const requireDebug = (req, res, next) => {
+  if (req.headers['x-debug-token'] !== process.env.DEBUG_TOKEN)
+    return res.status(401).json({ ok:false, error:'unauthorized' });
+  next();
+};
 app.use(bodyParser.urlencoded({extended: true}));
 
+// POST /debug/seed_offer  (только для тестов)
+app.post('/debug/seed_offer', requireDebug, async (req, res) => {
+  try {
+    const { target_url, event_type, name, slug, base_rate, premium_rate } = req.body || {};
+    const sql = `
+      INSERT INTO offers (id, advertiser_id, target_url, event_type, name, slug, base_rate, premium_rate, status)
+      VALUES (gen_random_uuid(), gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'active')
+      RETURNING id
+    `;
+    const r = await query(sql, [target_url, event_type, name, slug, base_rate, premium_rate]);
+    return res.json({ ok: true, offer_id: r.rows[0].id });
+  } catch (e) {
+    console.error('seed_offer error:', e);
+    return res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+
+async function sendCpaPostback(payload) {
+  const url = config.cpaPostbackUrl; // из .env: CPA_POSTBACK_URL
+  const headers = { 'content-type': 'application/json' };
+
+  // подпись (если указан CPA_PB_SECRET)
+  if (config.cpaSecret) {
+    const body = JSON.stringify(payload);
+    const sig = crypto.createHmac('sha256', config.cpaSecret).update(body).digest('hex');
+    headers['x-signature'] = sig;
+  }
+
+  // отправка
+  return axios.post(url, payload, { timeout: 5000, headers });
+}
+
+// POST /debug/complete { offer_id, uid, status? }
+app.post('/debug/complete', requireDebug, async (req, res) => {
+  try {
+    const { offer_id, uid, status = 'approved' } = req.body || {};
+    if (!offer_id || !uid) {
+      return res.status(400).json({ ok: false, error: 'offer_id and uid are required' });
+    }
+
+    await sendCpaPostback({ offer_id, uid, status });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('debug/complete error:', e?.response?.status, e?.message);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // Health
 app.get('/health', (req,res)=>res.json({ok:true}));
 

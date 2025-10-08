@@ -1,6 +1,5 @@
-import CryptoJS from 'crypto-js';
+import { createHmac } from 'node:crypto';
 
-export function hmacSHA256Hex(secret, message) {
-  const hash = CryptoJS.HmacSHA256(message, secret);
-  return CryptoJS.enc.Hex.stringify(hash);
+export function hmacSHA256Hex(secret, payload) {
+  return createHmac('sha256', secret).update(payload).digest('hex');
 }
