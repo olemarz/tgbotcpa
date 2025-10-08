@@ -1,11 +1,16 @@
 // src/bot/telegraf.js
-import { Telegraf } from 'telegraf';
+import { Telegraf, Scenes, session } from 'telegraf';
+import adsWizard from './adsWizard.js';
 
 if (!process.env.BOT_TOKEN) {
   console.error('BOT_TOKEN is not set');
 }
 
 export const bot = new Telegraf(process.env.BOT_TOKEN);
+
+const stage = new Scenes.Stage([adsWizard]);
+bot.use(session());
+bot.use(stage.middleware());
 
 // простой логгер апдейтов
 bot.use(async (ctx, next) => {
@@ -34,14 +39,18 @@ bot.command('whoami', async (ctx) => {
   }
 });
 
-// эхо на любой текст
-bot.on('text', async (ctx) => {
+bot.command('ads', (ctx) => ctx.scene.enter('ads-wizard'));
+
+// эхо на любой текст (вне сцен)
+bot.on('text', async (ctx, next) => {
+  if (ctx.scene?.current) return next();
   console.log('🗣 text', ctx.from?.id, '->', ctx.message?.text);
   try {
     await ctx.reply('echo: ' + ctx.message.text);
   } catch (e) {
     console.error('❌ send error', e);
   }
+  return next();
 });
 
 // ❗ Экспорт готового обработчика от Telegraf
