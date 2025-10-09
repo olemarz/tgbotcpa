@@ -1,14 +1,29 @@
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session, Markup } from 'telegraf';
-import { config } from '../config.js';
-import { adsWizard } from './adsWizard.js';
+import { Telegraf, Scenes, session } from 'telegraf';
+import adsWizard from './adsWizard.js';
 
 // ---- Инициализация бота ----
 if (!config.botToken) {
   throw new Error('BOT_TOKEN is required');
 }
-export const bot = new Telegraf(config.botToken, {
-  handlerTimeout: 30_000,
+
+export const bot = new Telegraf(process.env.BOT_TOKEN);
+
+const stage = new Scenes.Stage([adsWizard]);
+bot.use(session());
+bot.use(stage.middleware());
+
+// простой логгер апдейтов
+bot.use(async (ctx, next) => {
+  try {
+    const t = ctx.message?.text || ctx.callbackQuery?.data;
+    console.log('➡️ update', {
+      from: ctx.from?.id,
+      text: t,
+      type: Object.keys(ctx.update)
+    });
+  } catch (e) {}
+  return next();
 });
 
 // ---- Сцены (мастер /ads) ----
@@ -32,20 +47,11 @@ bot.command('whoami', async (ctx) => {
   }
 });
 
-// ВАЖНО: эта команда переводит пользователя в мастер
 bot.command('ads', (ctx) => ctx.scene.enter('ads-wizard'));
 
-// Пока заглушка
-bot.command('statistic', async (ctx) => {
-  await ctx.reply('📊 Статистика в разработке. Для теста постбеков используй /debug-ручки на сервере.');
-});
-
-bot.command('debug', async (ctx) => {
-  await ctx.reply('🔧 Тестовые ручки включены на сервере: /debug/seed_offer и /debug/complete.');
-});
-
-// Логируем и эхо на произвольный текст (полезно в отладке)
-bot.on('text', async (ctx) => {
+// эхо на любой текст (вне сцен)
+bot.on('text', async (ctx, next) => {
+  if (ctx.scene?.current) return next();
   console.log('🗣 text', ctx.from?.id, '->', ctx.message?.text);
   try {
     // не отвечаем «echo:/ads», если пользователь в сцене
@@ -55,6 +61,7 @@ bot.on('text', async (ctx) => {
   } catch (e) {
     console.error('❌ send error', e);
   }
+  return next();
 });
 
 // ---- Экспорт обработчика вебхука для Express (всегда 200) ----

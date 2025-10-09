@@ -8,7 +8,15 @@ export const config = {
   cpaPostbackUrl: process.env.CPA_POSTBACK_URL,
   cpaSecret: process.env.CPA_PB_SECRET,
   allowedUpdates: (process.env.ALLOWED_UPDATES || '').split(',').map(s => s.trim()).filter(Boolean),
-  tz: process.env.TZ || 'Europe/Rome'
+  tz: process.env.TZ || 'Europe/Rome',
+  MIN_RATES: {
+    join_group: { base: 5, premium: 10 },
+    forward: { base: 2, premium: 7 },
+    reaction: { base: 1, premium: 5 },
+    comment: { base: 3, premium: 10 },
+    paid: { base: 30, premium: 30 },
+    start_bot: { base: 3, premium: 10 }
+  }
 };
 
 if (!config.botToken) throw new Error('BOT_TOKEN is required');
