@@ -15,6 +15,13 @@ Minimal MVP to track Telegram join/reaction/comment/poll/share events and send p
    curl -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook"      -d "url=$BASE_URL/bot/webhook"      -d 'allowed_updates=["chat_member","chat_join_request","message_reaction","message_reaction_count","poll_answer","message","channel_post","pre_checkout_query","successful_payment"]'
    ```
 
+## Deploy (GitHub Actions → SSH)
+
+1. Push/merge в `main` → запускается workflow `Deploy via SSH`.
+2. В GitHub Actions убедитесь, что ран зелёный и шаги дошли до SSH.
+3. Сверьте SHA коммита в логах деплоя с `git rev-parse HEAD` на сервере.
+4. На сервере проверьте `pm2 status` и `pm2 logs tg-api`.
+
 ## Endpoints
 - `GET /click/:offerId` → creates token & redirects to `t.me/Bot?start=<token>`
 - `GET /s/:shareToken` → counts unique share click & redirects

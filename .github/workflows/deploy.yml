@@ -1,0 +1,57 @@
+name: Deploy via SSH
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  deploy:
+    name: SSH deploy to production
+    runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      APP_DIR: ${{ secrets.APP_DIR }}
+      PM2_NAME: ${{ secrets.PM2_NAME }}
+    steps:
+      - name: Checkout repository
+        # Получаем свежий код из репозитория
+        uses: actions/checkout@v4
+
+      - name: Start SSH agent
+        # Поднимаем ssh-agent и добавляем приватный ключ деплоя
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ env.SSH_KEY }}
+
+      - name: Add remote host to known_hosts
+        # Доверяемся продакшен-серверу, чтобы SSH не спрашивал подтверждение
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${SSH_PORT:-22}" "${SSH_HOST}" >> ~/.ssh/known_hosts
+        shell: bash
+
+      - name: Deploy application over SSH
+        # Выполняем деплой-скрипт на сервере: обновление кода, зависимости и перезапуск PM2
+        env:
+          SSH_HOST: ${{ env.SSH_HOST }}
+          SSH_PORT: ${{ env.SSH_PORT }}
+          SSH_USER: ${{ env.SSH_USER }}
+          APP_DIR: ${{ env.APP_DIR }}
+          PM2_NAME: ${{ env.PM2_NAME }}
+        run: |
+          ssh -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" <<'REMOTE'
+          set -eo pipefail
+          cd "${APP_DIR:-/opt/tgbotcpa}"
+          git fetch origin
+          git reset --hard origin/main
+          if [ -f package-lock.json ]; then npm ci --omit=dev; else npm i --omit=dev; fi
+          # npx prisma migrate deploy || true   # закомментировано, оставить как подсказку
+          # npm run build || true               # при необходимости
+          pm2 reload "${PM2_NAME:-tg-api}" || pm2 start ecosystem.config.cjs --only "${PM2_NAME:-tg-api}"
+          pm2 save
+          REMOTE
+        shell: bash
