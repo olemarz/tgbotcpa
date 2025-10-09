@@ -1,41 +1,51 @@
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session, Markup } from 'telegraf';
 import adsWizard from './adsWizard.js';
+import { config } from '../config.js';
 
 // ---- Инициализация бота ----
 if (!config.botToken) {
   throw new Error('BOT_TOKEN is required');
 }
 
-export const bot = new Telegraf(process.env.BOT_TOKEN);
+export const bot = new Telegraf(config.botToken);
 
 const stage = new Scenes.Stage([adsWizard]);
+
 bot.use(session());
 bot.use(stage.middleware());
+
+const logUpdate = (ctx) => {
+  const text = ctx.message?.text || ctx.callbackQuery?.data;
+  console.log('➡️ update', {
+    from: ctx.from?.id,
+    text,
+    type: Object.keys(ctx.update)
+  });
+};
 
 // простой логгер апдейтов
 bot.use(async (ctx, next) => {
   try {
-    const t = ctx.message?.text || ctx.callbackQuery?.data;
-    console.log('➡️ update', {
-      from: ctx.from?.id,
-      text: t,
-      type: Object.keys(ctx.update)
-    });
-  } catch (e) {}
+    logUpdate(ctx);
+  } catch (e) {
+    // swallow logging errors to avoid breaking middleware chain
+  }
   return next();
 });
-
-// ---- Сцены (мастер /ads) ----
-const stage = new Scenes.Stage([adsWizard]);
-bot.use(session());             // важно: должна идти ДО stage.middleware()
-bot.use(stage.middleware());
 
 // ---- Команды ----
 bot.start(async (ctx) => {
   await ctx.reply(
     '👋 Привет! Бот на вебхуке готов. Напиши /whoami или /ads',
-    Markup.inlineKeyboard([[Markup.button.url('Док', 'https://t.me')]])
+    Markup.inlineKeyboard([
+      [
+        Markup.button.url(
+          'Документация',
+          'https://github.com/olemarz/tgbotcpa/blob/main/docs/SUMMARY.md'
+        )
+      ]
+    ])
   );
 });
 

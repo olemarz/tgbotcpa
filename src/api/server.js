@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
+import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { query } from '../db/index.js';
 import { uuid, shortToken } from '../util/id.js';
@@ -42,22 +43,35 @@ app.post('/debug/seed_offer', requireDebug, async (req, res) => {
 async function sendCpaPostback(payload) {
   const url = config.cpaPostbackUrl; // из .env: CPA_POSTBACK_URL
   const headers = { 'content-type': 'application/json' };
+  const body = JSON.stringify(payload);
 
   // подпись (если указан CPA_PB_SECRET)
   if (config.cpaSecret) {
-    const body = JSON.stringify(payload);
     const sig = crypto.createHmac('sha256', config.cpaSecret).update(body).digest('hex');
     headers['x-signature'] = sig;
   }
 
-  // отправка
-  return axios.post(url, payload, { timeout: 5000, headers });
+  try {
+    return await axios.post(url, payload, { timeout: 5000, headers });
+  } catch (error) {
+    const { offer_id, uid, event } = payload || {};
+    const status = error?.response?.status;
+    console.error('sendCpaPostback error', { offer_id, uid, event, status, message: error?.message });
+    throw error;
+  }
 }
 
 // POST /debug/complete { offer_id, uid, status? }
 app.post('/debug/complete', requireDebug, async (req, res) => {
   try {
-    const { offer_id, uid, status = 'approved' } = req.body || {};
+    const {
+      offer_id: offerIdRaw,
+      uid: uidRaw,
+      status = 'approved'
+    } = req.body || {};
+
+    const offer_id = (offerIdRaw ?? '').toString().trim();
+    const uid = (uidRaw ?? '').toString().trim();
     if (!offer_id || !uid) {
       return res.status(400).json({ ok: false, error: 'offer_id and uid are required' });
     }
@@ -65,7 +79,10 @@ app.post('/debug/complete', requireDebug, async (req, res) => {
     await sendCpaPostback({ offer_id, uid, status });
     return res.json({ ok: true });
   } catch (e) {
-    console.error('debug/complete error:', e?.response?.status, e?.message);
+    console.error('debug/complete error', {
+      status: e?.response?.status,
+      message: e?.message
+    });
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -109,8 +126,18 @@ app.get('/s/:shareToken', async (req, res) => {
 
 // External relay (for advertiser bots) -> expect user_id + offer_id + event
 app.post('/postbacks/relay', async (req, res) => {
-  const { offer_id, user_id, event, meta } = req.body || {};
-  if (!offer_id || !user_id || !event) return res.status(400).json({ok:false, error:'missing fields'});
+  const offer_id_raw = req.body?.offer_id;
+  const user_id_raw = req.body?.user_id;
+  const event_raw = req.body?.event;
+  const meta = req.body?.meta;
+
+  const offer_id = (offer_id_raw ?? '').toString().trim();
+  const user_id = (user_id_raw ?? '').toString().trim();
+  const event = (event_raw ?? '').toString().trim();
+
+  if (!offer_id || !user_id || !event) {
+    return res.status(400).json({ ok:false, error:'missing fields' });
+  }
 
   const attr = await query('SELECT uid FROM attribution WHERE offer_id=$1 AND user_id=$2', [offer_id, user_id]);
   if (!attr.rowCount) return res.status(404).json({ok:false, error:'no attribution'});
@@ -118,12 +145,19 @@ app.post('/postbacks/relay', async (req, res) => {
 
   const ts = Math.floor(Date.now()/1000);
   const payload = { click_id: uid, offer_id, event, ts };
-  const sig = hmacSHA256Hex(process.env.CPA_PB_SECRET, `${uid}|${offer_id}|${event}|${ts}`);
+  const sig = hmacSHA256Hex(config.cpaSecret, `${uid}|${offer_id}|${event}|${ts}`);
 
   try {
-    await axios.post(process.env.CPA_POSTBACK_URL, { ...payload, sig, status:1 });
+    await axios.post(config.cpaPostbackUrl, { ...payload, sig, status:1 });
     res.json({ok:true});
   } catch (e) {
+    console.error('postbacks/relay error', {
+      offer_id,
+      uid,
+      event,
+      status: e?.response?.status,
+      message: e?.message
+    });
     res.status(502).json({ok:false, error:'cpa postback failed'});
   }
 });
