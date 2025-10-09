@@ -77,6 +77,17 @@
 
 Заготовка под очередь повторных отправок постбеков.
 
+### `offer_audit_log`
+- `id UUID PRIMARY KEY`
+- `offer_id UUID NOT NULL`
+- `action TEXT NOT NULL`
+- `user_id BIGINT`
+- `chat_id BIGINT`
+- `details JSONB`
+- `created_at TIMESTAMPTZ DEFAULT now()`
+
+Фиксирует минимальный аудит действий с офферами (мастер `/ads` пишет событие `created`).
+
 ## Seeds
 - Специальных сидов нет. Для тестов используйте `POST /debug/seed_offer` и `/debug/complete`.
 
