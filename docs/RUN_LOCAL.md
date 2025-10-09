@@ -7,7 +7,8 @@
 
 ## Настройка окружения
 1. Создайте файл `.env` в корне, взяв за основу [.env.example](../.env.example).
-   - Обновите значения согласно [CONFIG_ENV.md](CONFIG_ENV.md) (минимум `BOT_TOKEN`, `BASE_URL`, `DATABASE_URL`, `CPA_POSTBACK_URL`, `CPA_PB_SECRET`).
+   - В шаблоне перечислены `BOT_TOKEN`, `BASE_URL`, `PORT`, `DATABASE_URL`, `CPA_POSTBACK_URL`, `CPA_PB_SECRET`, `ALLOWED_UPDATES`, `TZ`, `DEBUG_TOKEN`, `WEBHOOK_PATH` (поддерживается алиас `CPA_PB_URL`).
+   - Обновите значения согласно [CONFIG_ENV.md](CONFIG_ENV.md) (минимум `BOT_TOKEN`, `BASE_URL`, `DATABASE_URL`, `CPA_POSTBACK_URL`/`CPA_PB_URL`, `CPA_PB_SECRET`).
 2. (Опционально) Поднимите PostgreSQL в Docker:
    ```bash
    docker run --name tgbotcpa-pg -e POSTGRES_PASSWORD=postgres \
@@ -37,7 +38,7 @@ npm run migrate
   ```bash
   NODE_ENV=dev npm run bot
   ```
-  При `NODE_ENV=dev` и отсутствии `WEBHOOK_PATH` бот запустит polling и выведет `Bot polling on <port>`.
+  При `NODE_ENV=dev` и отсутствии `WEBHOOK_PATH` бот запустит polling и выведет `Bot polling on <port>`. Если задать `WEBHOOK_PATH`, Express примет webhook на этом пути (по умолчанию `/bot/webhook`).
 
 ## Smoke-тест
 1. Убедитесь, что API запущен: `curl -s http://localhost:3000/health` → `{"ok":true}`.

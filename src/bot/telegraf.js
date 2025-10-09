@@ -85,9 +85,8 @@ export const webhookCallback = async (req, res) => {
 };
 
 // Для локального запуска (не на PM2/не на вебхуке)
-if (process.env.NODE_ENV === 'dev' && !process.env.WEBHOOK_PATH) {
-  const port = Number(process.env.PORT || 3000);
-  bot.launch().then(() => console.log('Bot polling on', port));
+if (config.nodeEnv === 'dev' && !config.webhookPath) {
+  bot.launch().then(() => console.log('Bot polling on', config.port));
 }
 
 // Корректное завершение
