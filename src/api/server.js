@@ -90,7 +90,8 @@ app.post('/debug/complete', requireDebug, async (req, res) => {
 app.get('/health', (req,res)=>res.json({ok:true}));
 
 // Webhook for Telegram
-app.post('/bot/webhook', webhookCallback);
+const webhookPath = config.webhookPath || '/bot/webhook';
+app.post(webhookPath, webhookCallback);
 
 // Click endpoint -> save click, create start token, redirect to bot
 app.get('/click/:offerId', async (req, res) => {
