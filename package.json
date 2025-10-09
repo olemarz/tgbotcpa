@@ -7,7 +7,9 @@
     "start": "node src/api/server.js",
     "bot": "node src/bot/run-bot.js",
     "api": "node src/api/server.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:ci": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --ci"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -17,5 +19,9 @@
     "pg": "^8.12.0",
     "telegraf": "^4.16.3",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.1.3"
   }
 }
