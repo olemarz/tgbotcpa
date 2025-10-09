@@ -6,9 +6,8 @@
 - PostgreSQL 14+ (локально или в Docker/облаке).
 
 ## Настройка окружения
-1. Создайте файл `.env` в корне.
-   - В репозитории нет `./.env.example` — **TODO: добавить шаблон** (см. ROADMAP).
-   - Заполните переменные из [CONFIG_ENV.md](CONFIG_ENV.md) (минимум `BOT_TOKEN`, `BASE_URL`, `DATABASE_URL`, `CPA_POSTBACK_URL`, `CPA_PB_SECRET`).
+1. Создайте файл `.env` в корне, взяв за основу [.env.example](../.env.example).
+   - Обновите значения согласно [CONFIG_ENV.md](CONFIG_ENV.md) (минимум `BOT_TOKEN`, `BASE_URL`, `DATABASE_URL`, `CPA_POSTBACK_URL`, `CPA_PB_SECRET`).
 2. (Опционально) Поднимите PostgreSQL в Docker:
    ```bash
    docker run --name tgbotcpa-pg -e POSTGRES_PASSWORD=postgres \
