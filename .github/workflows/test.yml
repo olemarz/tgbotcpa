@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  pull_request:
+
+jobs:
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run smoke tests
+        run: npm run test:ci
+        env:
+          BOT_TOKEN: test-bot-token
+          BASE_URL: http://localhost:3000
+          DATABASE_URL: postgres://user:pass@localhost:5432/db
+          CPA_POSTBACK_URL: https://example.com/postback
+          CPA_PB_SECRET: test-secret
+          DEBUG_TOKEN: debug-token
