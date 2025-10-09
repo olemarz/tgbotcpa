@@ -15,11 +15,18 @@ const eventLabels = {
 
 const minRates = config.MIN_RATES || {};
 
-const baseUrlHost = (() => {
+const baseUrlOrigin = (() => {
+  if (!config.baseUrl) {
+    return '';
+  }
   try {
-    return new URL(config.baseUrl).host;
+    return new URL(config.baseUrl).origin;
   } catch (e) {
-    return config.baseUrl || '';
+    const trimmed = config.baseUrl.replace(/\/+$/, '');
+    if (/^[a-z]+:\/\//i.test(trimmed)) {
+      return trimmed;
+    }
+    return `https://${trimmed}`;
   }
 })();
 
@@ -383,7 +390,7 @@ const adsWizard = new Scenes.WizardScene(
       const sql = `INSERT INTO offers (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`;
       const res = await query(sql, values);
       const insertedId = res.rows[0]?.id || offerId;
-      const clickUrl = `https://${baseUrlHost}/click/${insertedId}?uid={your_uid}`;
+      const clickUrl = `${baseUrlOrigin}/click/${insertedId}?uid={your_uid}`;
       await ctx.editMessageText(
         `✅ Оффер создан!\nСсылка для трафика: ${clickUrl}\nЗамените {your_uid} на значение из вашей CPA-сети.`
       );
