@@ -1,17 +1,15 @@
-# Глоссарий
+# GLOSSARY
 
-| Термин | Определение | Где встречается |
-|--------|-------------|-----------------|
-| **Offer / оффер** | Рекламное размещение с URL, типом события и ставками. | Таблица `offers`, сцена `/ads` (`src/bot/adsWizard.js`). |
-| **CPA (Cost Per Action)** | Модель оплаты за целевое действие. | Постбеки в `/postbacks/relay`, `sendCpaPostback`. |
-| **UID / click_id** | Идентификатор клика, который возвращается CPA-сети. | Таблица `clicks`, endpoint `/click/:offerId`. |
-| **Caps** | Ограничение количества целевых действий. | Поля `caps_total`, `caps_window` в `offers`. |
-| **Caps window** | Временное окно лимита (например, `100/day`). | Парсинг `parseCapsWindow` в `adsWizard`. |
-| **Premium ставка** | Увеличенная оплата за премиум-пользователей Telegram. | `adsWizard` шаг ставок, поля `premium_rate`. |
+| Термин | Определение | Где используется |
+|--------|-------------|------------------|
+| **Offer / оффер** | Настройка рекламной кампании в боте (URL, целевое действие, ставки, лимиты). | Таблица `offers`, сцена `/ads` (`src/bot/adsWizard.js`). |
+| **Event type** | Целевое действие пользователя: `join_group`, `forward`, `reaction`, `comment`, `paid`, `start_bot`. | Константы `EVENT_TYPES` (`src/bot/constants.js`), валидация сцены. |
+| **Caps** | Лимиты по количеству конверсий и окно (например, 10/day). | Поля `caps_total`, `caps_window` таблицы `offers`. |
 | **Time targeting** | Расписание показов оффера (по дням/часам). | `adsWizard`, поле `time_targeting`. |
-| **Attribution** | Связка `user_id ↔ uid` для последующих постбеков. | Таблица `attribution`, endpoint `/postbacks/relay`. |
-| **Postback** | HTTP-запрос в CPA-сеть о выполнении действия. | `sendCpaPostback`, таблица `postbacks`. |
-| **Wizard** | Пошаговый сценарий в Telegraf. | `Scenes.WizardScene` в `src/bot/adsWizard.js`. |
-| **Relay** | Ретрансляция событий из внешних ботов в CPA-сеть. | Endpoint `/postbacks/relay`. |
-| **Share-click** | Переход по шаринг-ссылке (`/s/:shareToken`). | Endpoint `/s/:shareToken`. |
-| **Start token** | Токен, с которым пользователь попадает в бота (`/start <token>`). | Таблица `start_tokens`, генерация в `/click/:offerId`. |
+| **Start token** | Одноразовый токен, выдаваемый при клике и передаваемый в `/start`. | Таблица `start_tokens`, endpoint `/click/:offerId`. |
+| **Attribution** | Связь Telegram-пользователя и клика с `uid/click_id`. | Таблица `attribution`, endpoint `/postbacks/relay`. |
+| **Postback** | HTTP-запрос в CPA сеть о выполнении события. | `sendCpaPostback` (`src/api/app.js`), таблица `postbacks`. |
+| **CPA secret** | HMAC-ключ для подписи postback payload. | Переменная `CPA_PB_SECRET`, `hmacSHA256Hex`. |
+| **Wizard** | Пошаговый сценарий (`Telegraf Scenes`) для сбора параметров оффера. | `src/bot/adsWizard.js`. |
+| **Debug token** | Токен доступа к `/debug/*` эндпоинтам. | `requireDebug` (`src/api/app.js`). |
+| **Share token** | Токен для упрощённого счётчика переходов (`/s/:shareToken`). | Endpoint `GET /s/:shareToken`. |
