@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS postbacks (
   attempts INT DEFAULT 0,
   last_try_at TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS offer_audit_log (
+  id UUID PRIMARY KEY,
+  offer_id UUID NOT NULL,
+  action TEXT NOT NULL,
+  user_id BIGINT,
+  chat_id BIGINT,
+  details JSONB,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS offer_audit_log_offer_idx ON offer_audit_log(offer_id);
 `;
 
 await query(sql);

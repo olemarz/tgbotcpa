@@ -1,13 +1,6 @@
 import 'dotenv/config';
-import express from 'express';
-import bodyParser from 'body-parser';
-import crypto from 'node:crypto';
 import { config } from '../config.js';
-import { query } from '../db/index.js';
-import { uuid, shortToken } from '../util/id.js';
-import { hmacSHA256Hex } from '../util/hmac.js';
-import axios from 'axios';
-import { bot, webhookCallback } from '../bot/telegraf.js';
+import { createApp } from './app.js';
 
 // simple UUID validator
 const isUUID = s =>
