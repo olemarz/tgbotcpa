@@ -8,31 +8,25 @@ if (!config.botToken) {
   throw new Error('BOT_TOKEN is required');
 }
 
-export const bot = new Telegraf(config.botToken);
+const bot = new Telegraf(config.botToken);
 
-const stage = new Scenes.Stage([adsWizard]);
-
-bot.use(session());
-bot.use(stage.middleware());
-
-const logUpdate = (ctx) => {
-  const text = ctx.message?.text || ctx.callbackQuery?.data;
-  console.log('➡️ update', {
-    from: ctx.from?.id,
-    text,
-    type: Object.keys(ctx.update)
-  });
-};
-
-// простой логгер апдейтов
+// лёгкий лог апдейтов (debug)
 bot.use(async (ctx, next) => {
-  try {
-    logUpdate(ctx);
-  } catch (e) {
-    // swallow logging errors to avoid breaking middleware chain
-  }
+  console.log('➡️ update', ctx.updateType, {
+    text: ctx.message?.text,
+    data: ctx.callbackQuery?.data,
+    from: ctx.from?.id,
+    chat: ctx.chat?.id
+  });
   return next();
 });
+
+// session — строго ДО stage
+bot.use(session());
+
+// сцены
+const stage = new Scenes.Stage([adsWizard]);
+bot.use(stage.middleware());
 
 // ---- Команды ----
 bot.start(async (ctx) => {
@@ -62,6 +56,7 @@ bot.command('ads', (ctx) => ctx.scene.enter('ads-wizard'));
 // эхо на любой текст (вне сцен)
 bot.on('text', async (ctx, next) => {
   if (ctx.scene?.current) return next();
+  if (ctx.message?.text?.startsWith('/')) return next();
   console.log('🗣 text', ctx.from?.id, '->', ctx.message?.text);
   try {
     // не отвечаем «echo:/ads», если пользователь в сцене
@@ -75,14 +70,10 @@ bot.on('text', async (ctx, next) => {
 });
 
 // ---- Экспорт обработчика вебхука для Express (всегда 200) ----
-export const webhookCallback = async (req, res) => {
-  try {
-    await bot.handleUpdate(req.body);
-  } catch (e) {
-    console.error('webhook error:', e);
-  }
-  res.sendStatus(200);
-};
+export const webhookCallback = bot.webhookCallback('/bot/webhook');
+
+export { bot };
+export default bot;
 
 // Для локального запуска (не на PM2/не на вебхуке)
 if (config.nodeEnv === 'dev' && !config.webhookPath) {
