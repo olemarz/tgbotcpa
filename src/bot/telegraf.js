@@ -2,8 +2,9 @@
 import { Telegraf, Scenes, session } from 'telegraf';
 import adsWizard from './adsWizard.js';
 
-if (!process.env.BOT_TOKEN) {
-  console.error('BOT_TOKEN is not set');
+// ---- Инициализация бота ----
+if (!config.botToken) {
+  throw new Error('BOT_TOKEN is required');
 }
 
 export const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -25,12 +26,19 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-// /start
+// ---- Сцены (мастер /ads) ----
+const stage = new Scenes.Stage([adsWizard]);
+bot.use(session());             // важно: должна идти ДО stage.middleware()
+bot.use(stage.middleware());
+
+// ---- Команды ----
 bot.start(async (ctx) => {
-  await ctx.reply('👋 Привет! Бот на вебхуке готов. Напиши /whoami');
+  await ctx.reply(
+    '👋 Привет! Бот на вебхуке готов. Напиши /whoami или /ads',
+    Markup.inlineKeyboard([[Markup.button.url('Док', 'https://t.me')]])
+  );
 });
 
-// /whoami
 bot.command('whoami', async (ctx) => {
   try {
     await ctx.reply(`Your Telegram ID: ${ctx.from?.id}`);
@@ -46,14 +54,32 @@ bot.on('text', async (ctx, next) => {
   if (ctx.scene?.current) return next();
   console.log('🗣 text', ctx.from?.id, '->', ctx.message?.text);
   try {
-    await ctx.reply('echo: ' + ctx.message.text);
+    // не отвечаем «echo:/ads», если пользователь в сцене
+    if (!ctx.scene?.current) {
+      await ctx.reply('echo: ' + ctx.message.text);
+    }
   } catch (e) {
     console.error('❌ send error', e);
   }
   return next();
 });
 
-// ❗ Экспорт готового обработчика от Telegraf
-export const webhookCallback = bot.webhookCallback('/bot/webhook', {
-  timeout: 30000, // можно убрать, но пусть будет
-});
+// ---- Экспорт обработчика вебхука для Express (всегда 200) ----
+export const webhookCallback = async (req, res) => {
+  try {
+    await bot.handleUpdate(req.body);
+  } catch (e) {
+    console.error('webhook error:', e);
+  }
+  res.sendStatus(200);
+};
+
+// Для локального запуска (не на PM2/не на вебхуке)
+if (process.env.NODE_ENV === 'dev' && !process.env.WEBHOOK_PATH) {
+  const port = Number(process.env.PORT || 3000);
+  bot.launch().then(() => console.log('Bot polling on', port));
+}
+
+// Корректное завершение
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
