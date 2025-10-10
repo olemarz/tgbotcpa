@@ -29,6 +29,7 @@ test('buildConfig supports CPA_PB_URL alias and derives baseUrlHost', () => {
 
   assert.equal(cfg.cpaPostbackUrl, 'https://cpa.example.com/postback');
   assert.equal(cfg.baseUrlHost, 'example.com');
+  assert.deepEqual(cfg.allowedUpdates, ['message', 'callback_query', 'chat_member', 'my_chat_member']);
 });
 
 test('buildConfig normalizes optional values', () => {
@@ -50,4 +51,19 @@ test('buildConfig normalizes optional values', () => {
   assert.equal(cfg.nodeEnv, 'dev');
   assert.equal(cfg.baseUrlHost, 'example.org');
   assert.equal(cfg.baseUrl, 'https://example.org/app');
+});
+
+test('buildConfig falls back to default allowed updates when env empty', () => {
+  const env = {
+    BOT_TOKEN: '123:abc',
+    BASE_URL: 'https://example.net',
+    DATABASE_URL: 'postgres://postgres:postgres@localhost:5432/tgbotcpa',
+    CPA_POSTBACK_URL: 'https://cpa.example.net/postback',
+    CPA_PB_SECRET: 'secret',
+    ALLOWED_UPDATES: '   ',
+  };
+
+  const cfg = buildConfig(env);
+
+  assert.deepEqual(cfg.allowedUpdates, ['message', 'callback_query', 'chat_member', 'my_chat_member']);
 });

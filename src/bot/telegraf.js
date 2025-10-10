@@ -93,7 +93,7 @@ export async function handleStart(ctx) {
 
     if (click.event_type === JOIN_GROUP_EVENT && click.target_url) {
       await ctx.reply(
-        'Нажмите кнопку ниже, чтобы вступить в группу — после вступления мы зафиксируем событие автоматически.',
+        'Нажмите, чтобы вступить в группу:',
         Markup.inlineKeyboard([[Markup.button.url('Вступить в группу', click.target_url)]])
       );
       return;

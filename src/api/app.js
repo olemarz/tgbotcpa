@@ -25,6 +25,16 @@ const generateStartToken = () => {
   return randomBytes(length).toString('base64url').slice(0, length);
 };
 
+const normalizeIp = (value) => {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('::ffff:')) {
+    return trimmed.slice('::ffff:'.length);
+  }
+  return trimmed;
+};
+
 export function createApp() {
   const app = express();
 
@@ -55,7 +65,7 @@ export function createApp() {
     const clickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
 
     const startToken = generateStartToken();
-    const ip = req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() || req.ip || null;
+    const ip = normalizeIp(req.headers['x-forwarded-for']?.toString().split(',')[0] ?? req.ip);
     const ua = req.get('user-agent') || null;
 
     try {
@@ -115,7 +125,15 @@ export function createApp() {
 
     try {
       const result = await sendPostback({ offer_id, tg_id, uid, click_id, event, payout_cents: normalizedPayout });
-      return res.json({ ok: true, status: result.status ?? null, signature: result.signature, dedup: !!result.dedup, dryRun: !!result.dryRun });
+      const httpStatus = result.http_status ?? result.status ?? null;
+      return res.json({
+        ok: true,
+        status: httpStatus,
+        http_status: httpStatus,
+        signature: result.signature,
+        dedup: !!result.dedup,
+        dryRun: !!result.dryRun,
+      });
     } catch (error) {
       console.error('debug/complete error', error);
       return res.status(502).json({ ok: false, error: error?.message || 'postback failed' });

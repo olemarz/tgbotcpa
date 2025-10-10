@@ -9,6 +9,8 @@ const DEFAULT_MIN_RATES = {
   start_bot: { base: 3, premium: 10 }
 };
 
+const DEFAULT_ALLOWED_UPDATES = ['message', 'callback_query', 'chat_member', 'my_chat_member'];
+
 const trim = (value) => (typeof value === 'string' ? value.trim() : value);
 
 function requireEnv(env, name, { alias } = {}) {
@@ -47,10 +49,15 @@ export function buildConfig(env = process.env) {
     parseUrl(cpaPostbackUrlRaw, 'CPA_POSTBACK_URL');
   }
 
-  const allowedUpdates = (trim(env.ALLOWED_UPDATES) || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const allowedUpdates = (() => {
+    const raw = trim(env.ALLOWED_UPDATES) || '';
+    if (!raw) return DEFAULT_ALLOWED_UPDATES;
+    const parsed = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return parsed.length ? parsed : DEFAULT_ALLOWED_UPDATES;
+  })();
 
   const webhookPath = (() => {
     const raw = trim(env.WEBHOOK_PATH);

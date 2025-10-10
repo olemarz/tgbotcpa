@@ -51,7 +51,7 @@ describe('bot.start', () => {
     assert.equal(replies.length, 1);
 
     const [text, extra] = replies[0];
-    assert.ok(text.includes('после вступления мы зафиксируем событие автоматически'));
+    assert.equal(text, 'Нажмите, чтобы вступить в группу:');
     const button = extra?.reply_markup?.inline_keyboard?.[0]?.[0];
     assert.equal(button?.text, 'Вступить в группу');
     assert.equal(button?.url, OFFER_URL);
