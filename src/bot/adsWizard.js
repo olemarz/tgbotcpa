@@ -37,12 +37,9 @@ const Step = {
   BASE_RATE: 3,
   PREMIUM_RATE: 4,
   CAPS_TOTAL: 5,
-  CAPS_WINDOW: 6,
-  TIME_TARGETING: 7,
-  TIME_TARGETING_MANUAL: 8,
-  OFFER_NAME: 9,
-  OFFER_SLUG: 10,
-  CONFIRM: 11,
+  OFFER_NAME: 6,
+  OFFER_SLUG: 7,
+  CONFIRM: 8,
 };
 
 const STEP_NUMBERS = {
@@ -51,36 +48,11 @@ const STEP_NUMBERS = {
   [Step.BASE_RATE]: 3,
   [Step.PREMIUM_RATE]: 4,
   [Step.CAPS_TOTAL]: 5,
-  [Step.CAPS_WINDOW]: 6,
-  [Step.TIME_TARGETING]: 7,
-  [Step.OFFER_NAME]: 8,
-  [Step.OFFER_SLUG]: 9,
+  [Step.OFFER_NAME]: 6,
+  [Step.OFFER_SLUG]: 7,
 };
 
 const TOTAL_INPUT_STEPS = Math.max(...Object.values(STEP_NUMBERS));
-
-const timeTargetingPresets = {
-  all: {
-    preset: '24/7',
-    BYDAY: ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'],
-    BYHOUR: Array.from({ length: 24 }, (_, i) => i),
-  },
-  weekdays: {
-    preset: 'weekdays',
-    BYDAY: ['MO', 'TU', 'WE', 'TH', 'FR'],
-    BYHOUR: Array.from({ length: 24 }, (_, i) => i),
-  },
-  working_hours: {
-    preset: 'business_hours',
-    BYDAY: ['MO', 'TU', 'WE', 'TH', 'FR'],
-    BYHOUR: Array.from({ length: 10 }, (_, i) => i + 9),
-  },
-  weekend: {
-    preset: 'weekend',
-    BYDAY: ['SA', 'SU'],
-    BYHOUR: Array.from({ length: 24 }, (_, i) => i),
-  },
-};
 
 let offersColumnsPromise;
 async function getOffersColumns() {
@@ -131,31 +103,9 @@ function parseNumber(text) {
   return Math.round(n * 100) / 100;
 }
 
-function parseCapsWindow(text) {
-  const normalized = text.trim().toLowerCase();
-  if (['0', 'none', 'нет', 'no'].includes(normalized)) return null;
-  const match = normalized.match(/^(\d+)\s*\/(day|hour|week|month)$/);
-  if (!match) return undefined;
-  return { size: Number(match[1]), unit: match[2] };
-}
-
-function formatCapsWindow(capsWindow) {
-  if (!capsWindow) return 'без окна';
-  return `${capsWindow.size}/${capsWindow.unit}`;
-}
-
 function formatCapsTotal(value) {
   if (!value) return 'без ограничений';
   return String(value);
-}
-
-function formatTimeTargeting(targeting) {
-  if (!targeting) return '24/7';
-  if (targeting.preset) return targeting.preset;
-  const obj = {};
-  if (targeting.BYDAY) obj.BYDAY = targeting.BYDAY;
-  if (targeting.BYHOUR) obj.BYHOUR = targeting.BYHOUR;
-  return JSON.stringify(obj);
 }
 
 function formatChatRef(chatRef) {
@@ -245,41 +195,7 @@ async function promptPremiumRate(ctx) {
 async function promptCapsTotal(ctx) {
   const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число, 0 — без ограничений).\n` +
-      'Команды: [Назад], [Отмена].'
-  );
-}
-
-async function promptCapsWindow(ctx) {
-  const stepNum = STEP_NUMBERS[Step.CAPS_WINDOW];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Укажите окно капа: например 10/day, 5/week или 0 для безлимита.\n` +
-      'Команды: [Назад], [Отмена].'
-  );
-}
-
-function buildTimeTargetingKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('24/7', 'tt:all')],
-    [Markup.button.callback('Будни', 'tt:weekdays')],
-    [Markup.button.callback('Рабочие дни 09–18', 'tt:working_hours')],
-    [Markup.button.callback('Выходные', 'tt:weekend')],
-    [Markup.button.callback('Ввести вручную (JSON)', 'tt:manual')],
-    [Markup.button.callback('↩️ Назад', 'tt:back')],
-  ]);
-}
-
-async function promptTimeTargeting(ctx) {
-  const stepNum = STEP_NUMBERS[Step.TIME_TARGETING];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Выберите временной таргетинг:`,
-    buildTimeTargetingKeyboard()
-  );
-}
-
-async function promptManualTimeTargeting(ctx) {
-  await ctx.reply(
-    'Отправьте JSON с полями BYDAY и/или BYHOUR, например {"BYDAY":["MO","TU"],"BYHOUR":[10,11]}.\n' +
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число от 10 и выше).\n` +
       'Команды: [Назад], [Отмена].'
   );
 }
@@ -508,8 +424,6 @@ function buildSummary(offer) {
     `Базовая ставка: ${formatRate(offer.base_rate)}`,
     `Премиум ставка: ${formatRate(offer.premium_rate)}`,
     `Кап: ${formatCapsTotal(offer.caps_total)}`,
-    `Окно капа: ${formatCapsWindow(offer.caps_window)}`,
-    `Таргетинг по времени: ${formatTimeTargeting(offer.time_targeting)}`,
     `Slug: <code>${offer.slug}</code>`,
   ];
   return lines.join('\n');
@@ -531,15 +445,6 @@ async function promptForStep(ctx, step) {
       break;
     case Step.CAPS_TOTAL:
       await promptCapsTotal(ctx);
-      break;
-    case Step.CAPS_WINDOW:
-      await promptCapsWindow(ctx);
-      break;
-    case Step.TIME_TARGETING:
-      await promptTimeTargeting(ctx);
-      break;
-    case Step.TIME_TARGETING_MANUAL:
-      await promptManualTimeTargeting(ctx);
       break;
     case Step.OFFER_NAME:
       await promptOfferName(ctx);
@@ -757,17 +662,17 @@ const adsWizard = new Scenes.WizardScene(
 
     const text = getMessageText(ctx);
     if (!text) {
-      await ctx.reply('Нужно целое число 0 или больше.');
+      await ctx.reply('Минимум 10. Введите значение от 10 и выше.');
       return;
     }
     const num = Number(text);
-    if (!Number.isInteger(num) || num < 0) {
-      await ctx.reply('Нужно целое число 0 или больше.');
+    if (!Number.isInteger(num) || num < 10) {
+      await ctx.reply('Минимум 10. Введите значение от 10 и выше.');
       return;
     }
 
     ctx.wizard.state.offer.caps_total = num;
-    await promptForStep(ctx, Step.CAPS_WINDOW);
+    await promptForStep(ctx, Step.OFFER_NAME);
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -775,123 +680,8 @@ const adsWizard = new Scenes.WizardScene(
       return cancelWizard(ctx);
     }
     if (isBack(ctx)) {
-      await promptForStep(ctx, Step.CAPS_TOTAL);
       ctx.wizard.selectStep(Step.CAPS_TOTAL);
-      return;
-    }
-
-    const input = getMessageText(ctx);
-    if (!input) {
-      await ctx.reply('Введите значение или 0 для безлимита.');
-      return;
-    }
-    const window = parseCapsWindow(input);
-    if (window === undefined) {
-      await ctx.reply('Используйте формат 10/day, 5/week или 0. Попробуйте ещё раз.');
-      return;
-    }
-    ctx.wizard.state.offer.caps_window = window;
-    await promptForStep(ctx, Step.TIME_TARGETING);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (ctx.message) {
-      if (isCancel(ctx)) {
-        return cancelWizard(ctx);
-      }
-      if (isBack(ctx)) {
-        await promptForStep(ctx, Step.CAPS_WINDOW);
-        ctx.wizard.selectStep(Step.CAPS_WINDOW);
-        return;
-      }
-    }
-
-    if (!ctx.callbackQuery?.data) {
-      return;
-    }
-
-    await ctx.answerCbQuery();
-    const data = ctx.callbackQuery.data;
-
-    if (data === 'tt:back') {
-      await ctx.editMessageReplyMarkup();
-      ctx.wizard.selectStep(Step.CAPS_WINDOW);
-      await promptForStep(ctx, Step.CAPS_WINDOW);
-      return;
-    }
-
-    if (data === 'tt:manual') {
-      await ctx.editMessageReplyMarkup();
-      await promptForStep(ctx, Step.TIME_TARGETING_MANUAL);
-      return ctx.wizard.next();
-    }
-
-    if (!data.startsWith('tt:')) {
-      return;
-    }
-
-    const value = data.split(':')[1];
-    const preset = timeTargetingPresets[value];
-    ctx.wizard.state.offer.time_targeting = preset
-      ? JSON.parse(JSON.stringify(preset))
-      : null;
-    ctx.wizard.state.offer.time_targeting_mode = preset ? `preset:${value}` : 'preset';
-    await ctx.editMessageReplyMarkup();
-    await promptForStep(ctx, Step.OFFER_NAME);
-    return ctx.wizard.selectStep(Step.OFFER_NAME);
-  },
-  async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      ctx.wizard.selectStep(Step.TIME_TARGETING);
-      await promptForStep(ctx, Step.TIME_TARGETING);
-      return;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(getMessageText(ctx) ?? '');
-    } catch (error) {
-      await ctx.reply('Не получилось разобрать JSON. Попробуйте ещё раз.');
-      return;
-    }
-
-    if (typeof parsed !== 'object' || !parsed) {
-      await ctx.reply('JSON должен быть объектом.');
-      return;
-    }
-
-    const { BYDAY, BYHOUR } = parsed;
-    if (BYDAY && (!Array.isArray(BYDAY) || BYDAY.some((d) => typeof d !== 'string'))) {
-      await ctx.reply('BYDAY должен быть массивом строк, например ["MO","TU"].');
-      return;
-    }
-    if (
-      BYHOUR &&
-      (!Array.isArray(BYHOUR) || BYHOUR.some((h) => !Number.isInteger(h) || h < 0 || h > 23))
-    ) {
-      await ctx.reply('BYHOUR должен быть массивом чисел 0–23.');
-      return;
-    }
-
-    ctx.wizard.state.offer.time_targeting = { BYDAY, BYHOUR };
-    ctx.wizard.state.offer.time_targeting_mode = 'manual';
-    await promptForStep(ctx, Step.OFFER_NAME);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      const previousStep =
-        ctx.wizard.state.offer.time_targeting_mode === 'manual'
-          ? Step.TIME_TARGETING_MANUAL
-          : Step.TIME_TARGETING;
-      ctx.wizard.selectStep(previousStep);
-      await promptForStep(ctx, previousStep);
+      await promptForStep(ctx, Step.CAPS_TOTAL);
       return;
     }
 
