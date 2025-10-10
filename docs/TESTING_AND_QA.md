@@ -1,40 +1,27 @@
-# Тестирование и QA
+# TESTING & QA
 
-## Перед релизом
-1. **Проверка миграций**
-   - `npm run migrate` на staging/preview БД.
-   - Убедиться, что новые таблицы создаются без ошибок.
-2. **Health-check**
-   - `curl -s https://<BASE_URL>/health` → `{ "ok": true }`.
-3. **Webhook Telegram**
-   - Проверить `setWebhook` на `$BASE_URL/bot/webhook`.
-   - Отправить `/whoami` → бот должен ответить ID.
-4. **Сцена /ads**
-   - Пройти мастер до конца, убедиться в создании записи в `offers` (`SELECT * FROM offers ORDER BY created_at DESC LIMIT 1`).
-   - Проверить валидации: ставки ниже минимума → бот должен отклонить.
-5. **Клики и токены**
-   - `curl -I "https://<BASE_URL>/click/<offer_id>?uid=test123"` → статус `302` и редирект на `t.me`.
-   - Проверить наличие записи в `clicks` и `start_tokens`.
-6. **Relay постбек**
-   - Подготовить запись в `attribution` (`INSERT` вручную или через сцену, если реализовано).
-   - `curl -X POST https://<BASE_URL>/postbacks/relay -H 'Content-Type: application/json' -d '{"offer_id":"...","user_id":123,"event":"conversion"}'` → `{ "ok": true }`.
-   - Проверить, что CPA-сеть получает подписанный POST (отследить через логи).
-7. **Debug endpoints** (при необходимости)
-   - С корректным `DEBUG_TOKEN` убедиться, что `/debug/seed_offer` и `/debug/complete` работают, без него — 401.
+## Автоматические проверки
+- **Smoke-тесты API** — `tests/smoke/api.spec.js` (Jest + Supertest). Проверяет `/health`, валидацию `/postbacks/relay`, debug endpoint `/debug/complete` (с заглушкой axios).
+- **Запуск**: `node --test` (скрипт `npm run test`).
+- ⚠️ TODO (P0): Workflow `.github/workflows/test.yml` вызывает `npm run test:ci`, которого нет в `package.json`. Из-за этого CI падает. Добавьте скрипт или обновите workflow.
 
-## Проверка логов
-- `pm2 logs tg-api --lines 100` — нет ошибок при старте или в процессе.
-- Ищите сообщения `webhook error`, `send error`, `ads wizard insert error`.
+## Ручной smoke-check перед релизом
+1. **API**
+   - `curl -f https://<BASE_URL_HOST>/health` → `{ "ok": true }`.
+   - `curl -I "https://<BASE_URL_HOST>/click/<offer_uuid>?click_id=test"` → 302 на `https://t.me/<bot>?start=...`.
+2. **Бот**
+   - Написать боту `/whoami` → получить ID.
+   - Запустить `/ads` и пройти минимум до шага выбора типа события (валидировать inline-кнопки и проверки). Используйте тестовую ссылку `https://t.me/c/123456789/1?comment=2`.
+3. **Постбек**
+   - С подставным `DEBUG_TOKEN` отправить `POST /debug/complete` и убедиться, что в логах нет ошибок HMAC.
 
-## Регресс по багам
-- Убедиться, что импорты `config`, `Markup`, `crypto` исправлены (см. ROADMAP) перед релизом.
-- Проверить, что дубликат `Scenes.Stage` удалён, иначе сцены инициализируются дважды.
+## Регрессионный чек
+- Просмотреть `pm2 logs tg-api --lines 100` на предмет ошибок отправки в CPA (axios). Повторяющиеся `cpa postback failed` → блокер релиза.
+- Проверить базу: `SELECT COUNT(*) FROM offers;` после миграции/создания оффера.
 
-## Автоматические smoke-тесты
-- `npm test` — локальный прогон (использует Jest + Supertest, поднимает Express-приложение в памяти).
-- `npm run test:ci` — скрипт для CI (без watch-режима, работает последовательно).
-- GitHub Actions (`.github/workflows/test.yml`) запускает smoke-тесты на каждый Pull Request.
-- Переменные окружения для тестов задаются автоматически (см. `tests/setup-env.js`), при необходимости можно переопределить их перед запуском.
+## Локальные тестовые данные
+- Используйте `POST /debug/seed_offer` для создания оффера.
+- Вручную добавьте запись в `start_tokens`, чтобы протестировать `/click` редирект (или запустить `GET /click/...`).
 
-## TODO
-- Добавить unit-тесты для парсеров (`parseCapsWindow`, `ensureMinRate`).
+## Мониторинг после деплоя
+- Через 5–10 минут после релиза убедиться, что `/health` доступен, а в бот поступают новые апдейты (см. логи).

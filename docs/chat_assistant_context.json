@@ -1,6 +1,6 @@
 {
   "project": "tgbotcpa",
-  "purpose": "Telegram-бот для управления офферами и отслеживания CPA-конверсий",
+  "purpose": "Telegram-бот для задач/рекла и трекинга конверсий",
   "stack": {
     "runtime": "Node.js 20",
     "frameworks": ["Express", "Telegraf"],
@@ -9,46 +9,49 @@
   },
   "entrypoints": [
     "src/api/server.js",
-    "src/bot/run-bot.js",
     "ecosystem.config.cjs"
   ],
   "commands": {
-    "dev": "NODE_ENV=dev npm run bot",
-    "start": "npm start",
-    "api": "npm run api",
-    "bot": "npm run bot",
-    "migrate": "npm run migrate"
+    "start": "node src/api/server.js",
+    "api": "node src/api/server.js",
+    "bot": "node src/bot/run-bot.js",
+    "migrate": "node src/db/migrate.js",
+    "test": "node --test"
   },
   "env": {
-    "BOT_TOKEN": "string|required|токен Telegram-бота",
-    "BASE_URL": "url|required|публичный URL API для webhook/redirect",
-    "PORT": "number|optional|порт HTTP-сервера (по умолчанию 3000)",
-    "DATABASE_URL": "url|required|подключение к PostgreSQL",
-    "CPA_POSTBACK_URL": "url|required|endpoint CPA-сети для отправки постбеков",
-    "CPA_PB_SECRET": "string|required|секрет подписи HMAC для CPA (dev-значение при отсутствии)",
-    "ALLOWED_UPDATES": "csv|optional|ограничение типов апдейтов Telegram",
-    "TZ": "string|optional|часовой пояс приложения",
-    "DEBUG_TOKEN": "string|optional|ключ для debug эндпоинтов",
-    "NODE_ENV": "string|optional|режим запуска (dev включает polling)",
-    "WEBHOOK_PATH": "string|optional|принудительный webhook-режим"
+    "BOT_TOKEN": "string|required|Telegram bot token для Telegraf",
+    "BASE_URL": "url|required|Базовый URL для генерации /click редиректов",
+    "PORT": "number|optional|Порт HTTP сервера (default 3000)",
+    "DATABASE_URL": "url|required|PostgreSQL connection string",
+    "CPA_POSTBACK_URL": "url|required|Endpoint CPA сети для постбеков",
+    "CPA_PB_SECRET": "string|recommended|HMAC секрет для подписи postback",
+    "ALLOWED_UPDATES": "csv|optional|Список типов апдейтов Telegram",
+    "TZ": "string|optional|Часовой пояс приложения",
+    "DEBUG_TOKEN": "string|optional|required-for-debug|Токен доступа к /debug/*",
+    "WEBHOOK_PATH": "string|optional|Путь вебхука Telegram",
+    "NODE_ENV": "string|optional|dev включает polling в telegraf"
   },
   "workflows": [
-    "ads_wizard: пользователь отправляет /ads → сцена в adsWizard.js собирает параметры → валидация ставок/лимитов → INSERT в offers",
-    "offer_click: GET /click/:offerId → проверка UUID → запись в clicks/start_tokens → редирект в t.me с start токеном",
-    "postback/webhook: Telegram шлёт POST на /bot/webhook → bot.handleUpdate → сцена/команды → attribution в БД → relay/CPA POST",
-    "deploy: PR в main → ручной или GHA SSH → git pull в /opt/tgbotcpa → npm ci → npm run migrate → pm2 reload tg-api"
+    "ads_wizard: шаги → валидации → запись в offers + audit",
+    "offer_creation: /ads сцена создаёт slug и ссылку /click",
+    "postback/webhook: /postbacks/relay → ищет attribution → axios.post CPA",
+    "deploy: PR→merge→GHA Deploy via SSH→git reset --hard→npm ci→pm2 reload"
   ],
   "repo_map": [
-    { "path": "src/bot/adsWizard.js", "role": "Wizard-сцена /ads" },
-    { "path": "src/api/server.js", "role": "Express API и webhook" },
-    { "path": "ecosystem.config.cjs", "role": "Конфиг PM2" },
-    { "path": "package.json", "role": "Скрипты и зависимости" }
+    { "path": "src/api/app.js", "role": "Express-приложение и HTTP-эндпоинты" },
+    { "path": "src/bot/adsWizard.js", "role": "Wizard сцена /ads" },
+    { "path": "src/bot/telegraf.js", "role": "Инициализация бота и команды" },
+    { "path": "ecosystem.config.cjs", "role": "PM2 конфигурация" },
+    { "path": "package.json", "role": "npm-скрипты и зависимости" }
   ],
-  "healthcheck": { "path": "/health", "expect": "200 OK", "note": "возвращает {\"ok\":true}" },
+  "healthcheck": {
+    "path": "/health",
+    "expect": "200 OK {\"ok\":true}",
+    "note": "Доступно через Express, без авторизации"
+  },
   "next_steps": [
-    "Импортировать config/Markup и убрать дублирование Stage в src/bot/telegraf.js",
-    "Добавить import crypto в src/api/server.js для sendCpaPostback",
-    "Настроить мониторинг наличия BOT_TOKEN/BASE_URL и работоспособности webhook",
-    "Подготовить .env.example с описанием переменных"
+    "P0: починить src/api/server.js, чтобы использовать createApp() и корректные импорты",
+    "P0: обновить workflow .github/workflows/test.yml или добавить npm script test:ci",
+    "P0: включить npm run migrate в деплой-скрипте (deploy.yml и/или серверный чеклист)"
   ]
 }

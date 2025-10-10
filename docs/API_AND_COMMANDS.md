@@ -1,56 +1,43 @@
-# HTTP API и команды бота
+# API И КОМАНДЫ
 
 ## Telegram-команды
-| Команда | Что делает | Код | Пример использования |
-|---------|------------|-----|----------------------|
-| `/start` | Приветствие, ссылка на документацию (inline-кнопка). Требует импорта `Markup` в `src/bot/telegraf.js`. | `src/bot/telegraf.js`, строки 34-40 | После перехода по ссылке `/start` → бот отвечает приветствием.
-| `/whoami` | Возвращает Telegram ID пользователя. | `src/bot/telegraf.js`, строки 42-48 | Пользователь пишет `/whoami` → ответ `Your Telegram ID: <id>`.
-| `/ads` | Запускает сцену `ads-wizard` для создания оффера с поэтапными подсказками. | `src/bot/telegraf.js`, строка 50 | Ввести `/ads`, далее следовать шагам мастера (см. ниже).
-| `/cancel` / `Отмена` (внутри сцены) | Прерывает мастер. | `src/bot/adsWizard.js` | В любой момент сцены ввести `/cancel` или написать `Отмена` → бот подтверждает отмену.
+| Команда | Описание | Где реализовано | Ответ/действие |
+|---------|----------|-----------------|----------------|
+| `/start` | Приветствие и ссылка на документацию. | `src/bot/telegraf.js` (`bot.start`) | Сообщение с приветствием и inline-кнопкой «Документация». |
+| `/whoami` | Отправляет пользователю его Telegram ID. | `src/bot/telegraf.js` (`bot.command('whoami')`) | Текст `Your Telegram ID: <id>`. Ошибки логируются. |
+| `/ads` | Запускает сцену мастера создания оффера. | `src/bot/telegraf.js` (`ctx.scene.enter('ads-wizard')`) | Пользователь переводится в сцену `adsWizard`, дальше шаги ниже. |
+| Любой текст вне сцены | Эхо-ответ с `echo: <текст>`. | `src/bot/telegraf.js` (`bot.on('text')`) | Отправляет echo, если пользователь не в сцене и сообщение не команда. |
 
-### Сцена `ads-wizard`
-Файл `src/bot/adsWizard.js` реализует продвинутый мастер. Общие правила:
-- на каждом шаге доступны команды `[Назад]` (кнопка/сообщение) и `[Отмена]`;
-- ссылка валидируется и проверяется через `getChat` → бот убеждается, что цель существует и доступна;
-- итоговый экран показывает HTML-резюме с подсветкой всех полей перед подтверждением.
+## Сцена `adsWizard`
+Файл: `src/bot/adsWizard.js`. Сцена содержит последовательность шагов (`Step.*`), валидирует ввод и сохраняет оффер. Основные шаги:
+1. **Ввод ссылки** (`Step.TARGET_URL`): проверка формата `https://t.me/...`, hostname ∈ {t.me, telegram.me, telegram.dog}. Функции `parseTelegramUrl` и `buildChatLookup` валидируют ID/username, запрещают инвайт-ссылки (`t.me/+...`).
+2. **Выбор типа события** (`Step.EVENT_TYPE`): inline-клавиатура (`buildEventKeyboard`) с типами из `EVENT_TYPES`. `ensureEventCompatibility` проверяет соответствие типа и ссылки (например, для реакций требуется `messageId`).
+3. **Ставки** (`Step.BASE_RATE` и `Step.PREMIUM_RATE`): ввод чисел, минимум берётся из `config.MIN_RATES` (например, join_group ≥ 5/10). `parseNumber` приводит ввод, `ensureMinRate` проверяет пороги.
+4. **Капы** (`Step.CAPS_TOTAL`, `Step.CAPS_WINDOW`): принимает целое число (0 = без лимита) и строку формата `10/day`, `5/week`, `0`. `parseCapsWindow` возвращает объект `{ size, unit }` или `null`.
+5. **Временной таргетинг** (`Step.TIME_TARGETING`): inline-предустановки (`timeTargetingPresets`) или ручной JSON (`Step.TIME_TARGETING_MANUAL`). При ручном вводе ожидается JSON с массивами `BYDAY`, `BYHOUR`.
+6. **Название и slug** (`Step.OFFER_NAME`, `Step.OFFER_SLUG`): название произвольное. Для slug используется `slugify`/`ensureUniqueSlug`; пользователь может оставить авто-slug (`-`) или ввести свой (3–60 символов, латиница/цифры/тире).
+7. **Подтверждение** (`Step.CONFIRM`): бот выводит сводку (`buildSummary`), кнопки «✅ Запустить» / «✏️ Исправить». При подтверждении создаётся запись в таблице `offers`, аудит (`insertOfferAuditLog`), и отправляется итоговый URL вида `https://<BASE_URL_HOST>/click/<offer_id>?uid={your_uid}`.
 
-Ключевые шаги:
-1. **Старт и аудит** — инициализация, сохранение `user_id`, `chat_id`, времени запуска мастера.
-2. **Проверка ссылки** — поддерживаются публичные `@username` и `t.me/c/...`; при ошибке выводятся дружелюбные подсказки.
-3. **Выбор события** — кнопки `EVENT_ORDER` с проверкой совместимости (например, `join_group` → только группы/каналы, `reaction` и `comment` → нужны ссылки на сообщение, для `comment` обязательна ссылка на обсуждение с `?comment=`/`?thread=`, `start_bot` → бот/мини‑апп с параметром `start=` или `startapp=`, `paid` → либо сообщение с оплатой, либо бот со стартовым параметром).
-4. **Ставки** — базовая и премиум, обе сверяются с `config.MIN_RATES`, premium ≥ base.
-5. **Капы** — общий лимит (целое число ≥ 0) и окно в формате `N/day|hour|week|month` или `0`.
-6. **Временной таргетинг** — пресеты (`24/7`, «Будни», «09–18», «Выходные») или ручной JSON c `BYDAY`/`BYHOUR`.
-7. **Название и slug** — генерация slug через `slugify` + `ensureUniqueSlug`; пользователь может оставить (`-`) или задать свой. При конфликте бот предлагает свободный вариант.
-8. **Резюме** — HTML-обзор полей (ссылка, чат, ставки, капы, таргетинг, slug) и кнопки «Подтвердить»/«Назад»/«Отмена».
-
-После подтверждения оффер сохраняется в `offers` (с `caps_window`, `time_targeting`, `chat_ref`, если колонки доступны), добавляется запись в `offer_audit_log`, а в консоль выводятся ключевые решения (`target resolved`, конфликт slug, `offer inserted`).
+Дополнительно:
+- Команды **«Отмена»/`/cancel`** завершают сцену (`cancelWizard`).
+- **«Назад»/`/back`** возвращают к предыдущему шагу.
+- При ошибках валидации бот повторяет шаг с пояснением.
 
 ## HTTP API
-| Метод и путь | Описание | Авторизация | Код |
-|--------------|----------|-------------|-----|
-| `POST /debug/seed_offer` | Создаёт оффер с произвольными параметрами (debug). Требует заголовок `x-debug-token`. | `x-debug-token == DEBUG_TOKEN` | `src/api/server.js`, строки 24-38 |
-| `POST /debug/complete` | Отправляет тестовый постбек в CPA-сеть для оффера/uid. | `x-debug-token == DEBUG_TOKEN` | `src/api/server.js`, строки 44-55 |
-| `GET /health` | Health-check, возвращает `{ ok: true }`. | Без авторизации | `src/api/server.js`, строка 58 |
-| `POST /bot/webhook` | Проксирует обновления Telegram в Telegraf. | Telegram | `src/api/server.js`, строка 60 |
-| `GET /click/:offerId` | Запись клика, выдача `start`-токена и редирект в Telegram. Валидирует UUID. | Без авторизации | `src/api/server.js`, строки 62-84 |
-| `GET /s/:shareToken` | Заглушка share-click (TODO: учёт уникальности). | Без авторизации | `src/api/server.js`, строки 86-94 |
-| `POST /postbacks/relay` | Принимает постбек от внешних ботов (нужны `offer_id`, `user_id`, `event`). Подписывает и ретранслирует в CPA. | Публичный (но проверяет атрибуцию) | `src/api/server.js`, строки 96-132 |
+Файл: `src/api/app.js`.
 
-### Примеры curl
-```bash
-# Health-check
-curl -s http://localhost:3000/health
-# Debug seed (нужен DEBUG_TOKEN в ENV)
-curl -H "x-debug-token: $DEBUG_TOKEN" -H "Content-Type: application/json" \
-  -d '{"target_url":"https://t.me/example","event_type":"start_bot","name":"Test","slug":"test-offer","base_rate":10,"premium_rate":15}' \
-  http://localhost:3000/debug/seed_offer
-```
+| Метод и путь | Назначение | Требования | Ответ |
+|--------------|------------|------------|--------|
+| `GET /health` | Health-check приложения. | Нет. | `{ "ok": true }`. |
+| `POST /bot/webhook` | Приём Telegram update через webhook. | Telegram должен слать JSON. | Всегда 200 (Telegraf webhook). |
+| `GET /click/:offerId` | Регистрация клика из CPA сети, генерация `start`-токена, редирект в бота. | `offerId` должен быть UUID; query должен содержать `sub`/`uid`/`click_id`. | 400 при ошибках; 302 редирект в `https://t.me/<bot>?start=<token>`. |
+| `GET /s/:shareToken` | Упрощённый счётчик «share». | Нет обязательных параметров. | 302 редирект (по умолчанию `https://t.me`). TODO: уникальный подсчёт. |
+| `POST /postbacks/relay` | Получение внешнего постбека (например, от бота рекламодателя) и ретрансляция в CPA сеть. | Тело должно содержать `offer_id`, `user_id`, `event`; требуется существующая атрибуция (`attribution`). | 200 `{ ok: true }` при успехе; 404, если нет атрибуции; 502 при ошибке CPA. |
+| `POST /debug/seed_offer` | Быстрое создание оффера для теста. | Заголовок `x-debug-token` = `process.env.DEBUG_TOKEN`. | `{ ok: true, offer_id }` или 401/500. |
+| `POST /debug/complete` | Триггер ручного постбека в CPA. | Тот же debug-token; тело: `offer_id`, `uid`, опционально `status`. | `{ ok: true }` или ошибки. |
 
-## Webhook Telegram
-- Установить через `setWebhook` на `$BASE_URL/bot/webhook` (пример в `README.md`).
-- PM2-процесс `tg-api` всегда держит API запущенным; webhook не требует отдельного процесса бота.
+### CPA Postback
+`sendCpaPostback(payload)` формирует подпись `x-signature = HMAC_SHA256(body, config.cpaSecret)` при наличии `CPA_PB_SECRET`. Таймаут запроса — 5 секунд. Ошибки логируются с `offer_id`, `uid`, `event`.
 
-## TODO
-- Реализовать учёт уникальных переходов в `/s/:shareToken` (см. комментарий TODO в коде).
-- Исправить отсутствующие импорты (`config`, `Markup`, `crypto`) перед деплоем (P0 в ROADMAP).
+### Авторизация debug-endpoints
+Middleware `requireDebug` в `src/api/app.js` сравнивает `x-debug-token` и `process.env.DEBUG_TOKEN`. При отсутствии заголовка или неверном значении — 401.
