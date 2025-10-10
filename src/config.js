@@ -33,7 +33,8 @@ export function buildConfig(env = process.env) {
   const botToken = requireEnv(env, 'BOT_TOKEN');
   const baseUrlRaw = requireEnv(env, 'BASE_URL');
   const dbUrl = requireEnv(env, 'DATABASE_URL');
-  const cpaPostbackUrlRaw = requireEnv(env, 'CPA_POSTBACK_URL', { alias: 'CPA_PB_URL' });
+
+  const cpaPostbackUrlRaw = trim(env.CPA_POSTBACK_URL ?? env.CPA_PB_URL ?? '');
 
   const port = Number.parseInt(trim(env.PORT) || '3000', 10);
   if (Number.isNaN(port)) {
@@ -42,7 +43,9 @@ export function buildConfig(env = process.env) {
 
   const baseUrl = baseUrlRaw;
   const baseUrlUrl = parseUrl(baseUrl, 'BASE_URL');
-  parseUrl(cpaPostbackUrlRaw, 'CPA_POSTBACK_URL');
+  if (cpaPostbackUrlRaw) {
+    parseUrl(cpaPostbackUrlRaw, 'CPA_POSTBACK_URL');
+  }
 
   const allowedUpdates = (trim(env.ALLOWED_UPDATES) || '')
     .split(',')
@@ -61,6 +64,22 @@ export function buildConfig(env = process.env) {
     cpaSecret = 'dev-secret';
   }
 
+  const botUsername = trim(env.BOT_USERNAME) || '';
+
+  const postbackTimeoutMs = (() => {
+    const raw = trim(env.POSTBACK_TIMEOUT_MS);
+    if (!raw) return 4000;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isNaN(parsed) ? 4000 : parsed;
+  })();
+
+  const idempotencyTtlSec = (() => {
+    const raw = trim(env.IDEMPOTENCY_TTL_SEC);
+    if (!raw) return 600;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isNaN(parsed) ? 600 : parsed;
+  })();
+
   return {
     botToken,
     baseUrl,
@@ -69,6 +88,9 @@ export function buildConfig(env = process.env) {
     dbUrl,
     cpaPostbackUrl: cpaPostbackUrlRaw,
     cpaSecret,
+    botUsername,
+    postbackTimeoutMs,
+    idempotencyTtlSec,
     allowedUpdates,
     tz: trim(env.TZ) || 'Europe/Rome',
     nodeEnv: trim(env.NODE_ENV) || undefined,

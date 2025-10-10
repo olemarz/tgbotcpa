@@ -1,27 +1,35 @@
 # TESTING & QA
 
 ## Автоматические проверки
-- **Smoke-тесты API** — `tests/smoke/api.spec.js` (Jest + Supertest). Проверяет `/health`, валидацию `/postbacks/relay`, debug endpoint `/debug/complete` (с заглушкой axios).
-- **Запуск**: `node --test` (скрипт `npm run test`).
-- ⚠️ TODO (P0): Workflow `.github/workflows/test.yml` вызывает `npm run test:ci`, которого нет в `package.json`. Из-за этого CI падает. Добавьте скрипт или обновите workflow.
+- **Node test + Supertest** — `tests/click.test.js`, `tests/debug-complete.test.js`, `tests/hmac.test.js`.
+  Проверяют редирект `/click/:offerId`, dry-run `/debug/complete` и подпись HMAC.
+- **Запуск**: `npm run test` или `npm run test:ci`.
 
 ## Ручной smoke-check перед релизом
 1. **API**
    - `curl -f https://<BASE_URL_HOST>/health` → `{ "ok": true }`.
-   - `curl -I "https://<BASE_URL_HOST>/click/<offer_uuid>?click_id=test"` → 302 на `https://t.me/<bot>?start=...`.
+   - `curl -I "https://<BASE_URL_HOST>/click/<offer_uuid>?uid=test&click_id=123"` → 302 на `https://t.me/<BOT_USERNAME>?start=...`.
+   - `curl -X POST https://<BASE_URL_HOST>/debug/complete` c заголовком `x-debug-token` и телом `{"offer_id":...,"tg_id":...,"event":"join_group"}` → `{ "ok": true, ... }`.
 2. **Бот**
-   - Написать боту `/whoami` → получить ID.
-   - Запустить `/ads` и пройти минимум до шага выбора типа события (валидировать inline-кнопки и проверки). Используйте тестовую ссылку `https://t.me/c/123456789/1?comment=2`.
+   - `/start <token>` (полученный из `/click`) → запись в `attribution` со `state='started'`, `clicks.used_at` обновлён.
+   - Вступить в тестовый канал/группу → в БД появляется `events.join_group`, `attribution.state='converted'`, в логах — успешный postback.
 3. **Постбек**
-   - С подставным `DEBUG_TOKEN` отправить `POST /debug/complete` и убедиться, что в логах нет ошибок HMAC.
+   - Проверить `postbacks` таблицу: новая запись со статусом `sent` (или `dry-run` в деве) и HTTP-статусом 200.
 
 ## Регрессионный чек
-- Просмотреть `pm2 logs tg-api --lines 100` на предмет ошибок отправки в CPA (axios). Повторяющиеся `cpa postback failed` → блокер релиза.
+- Просмотреть `pm2 logs tg-api --lines 100` на предмет ошибок отправки в CPA (ошибки `postback send failed`). Повторяющиеся ошибки → блокер релиза.
 - Проверить базу: `SELECT COUNT(*) FROM offers;` после миграции/создания оффера.
 
 ## Локальные тестовые данные
-- Используйте `POST /debug/seed_offer` для создания оффера.
-- Вручную добавьте запись в `start_tokens`, чтобы протестировать `/click` редирект (или запустить `GET /click/...`).
+- Используйте `GET /click/<offer_id>?uid=test` для генерации start-токена.
+- При необходимости `POST /debug/complete` (dry-run) для ручной отправки постбека.
 
 ## Мониторинг после деплоя
 - Через 5–10 минут после релиза убедиться, что `/health` доступен, а в бот поступают новые апдейты (см. логи).
+- Мониторить таблицы `clicks`, `attribution`, `events`, `postbacks` на появление свежих записей после рекламных запусков.
+
+## QA чек-лист трекинга
+1. **Клик**: открыть `{{base}}/click/<offer_id>?uid=U123&click_id=C456` → 302 на `https://t.me/<BOT_USERNAME>?start=...`, запись в `clicks` с UID и click_id.
+2. **Старт бота**: отправить `/start <token>` из шага выше → `clicks.used_at` заполнен, создана запись `attribution` со `state='started'`.
+3. **Конверсия**: вступить в группу/канал, где добавлен бот → `events` содержит `join_group`, `attribution.state='converted'`, отправлен постбек на `CPA_PB_URL` с заголовком `X-Signature`.
+4. **Идемпотентность**: повторное получение события `join_group` (повторный апдейт/пере-вступление) не создаёт второй постбек в течение TTL (`IDEMPOTENCY_TTL_SEC`).

@@ -1,44 +1,29 @@
 import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
-import axios from 'axios';
-import crypto from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import { config } from '../config.js';
 import { query } from '../db/index.js';
-import { uuid, shortToken } from '../util/id.js';
-import { hmacSHA256Hex } from '../util/hmac.js';
-import { bot, webhookCallback } from '../bot/telegraf.js';
+import { uuid } from '../util/id.js';
+import { sendPostback } from '../services/postback.js';
+import { webhookCallback } from '../bot/telegraf.js';
 
-const isUUID = (s) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const isUUID = (value) => UUID_REGEXP.test(value);
 
 const requireDebug = (req, res, next) => {
-  if (req.headers['x-debug-token'] !== process.env.DEBUG_TOKEN) {
+  if (!process.env.DEBUG_TOKEN || req.headers['x-debug-token'] !== process.env.DEBUG_TOKEN) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
-  next();
+  return next();
 };
 
-async function sendCpaPostback(payload) {
-  const url = config.cpaPostbackUrl;
-  const headers = { 'content-type': 'application/json' };
-  const body = JSON.stringify(payload);
-
-  if (config.cpaSecret) {
-    const sig = crypto.createHmac('sha256', config.cpaSecret).update(body).digest('hex');
-    headers['x-signature'] = sig;
-  }
-
-  try {
-    return await axios.post(url, payload, { timeout: 5000, headers });
-  } catch (error) {
-    const { offer_id, uid, event } = payload || {};
-    const status = error?.response?.status;
-    console.error('sendCpaPostback error', { offer_id, uid, event, status, message: error?.message });
-    throw error;
-  }
-}
+const generateStartToken = () => {
+  const length = 6 + Math.floor(Math.random() * 7);
+  return randomBytes(length).toString('base64url').slice(0, length);
+};
 
 export function createApp() {
   const app = express();
@@ -51,109 +36,116 @@ export function createApp() {
   const webhookPath = process.env.WEBHOOK_PATH || '/bot/webhook';
   app.post(webhookPath, webhookCallback, (_req, res) => res.sendStatus(200));
 
-  app.post('/debug/seed_offer', requireDebug, async (req, res) => {
-    try {
-      const { target_url, event_type, name, slug, base_rate, premium_rate } = req.body || {};
-      const sql = `
-      INSERT INTO offers (id, advertiser_id, target_url, event_type, name, slug, base_rate, premium_rate, status)
-      VALUES (gen_random_uuid(), gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'active')
-      RETURNING id
-    `;
-      const r = await query(sql, [target_url, event_type, name, slug, base_rate, premium_rate]);
-      return res.json({ ok: true, offer_id: r.rows[0].id });
-    } catch (e) {
-      console.error('seed_offer error:', e);
-      return res.status(500).json({ ok: false, error: e.message });
+  app.get('/click/:offerId', async (req, res) => {
+    const { offerId } = req.params;
+    if (!isUUID(offerId)) {
+      return res.status(400).json({ ok: false, error: 'offer_id must be UUID' });
     }
+
+    const botUsername = config.botUsername || process.env.BOT_USERNAME || '';
+    if (!botUsername) {
+      return res
+        .status(500)
+        .json({ ok: false, error: 'BOT_USERNAME is required. Please set BOT_USERNAME in the environment.' });
+    }
+
+    const uidParam = req.query?.uid ?? req.query?.sub;
+    const clickIdParam = req.query?.click_id ?? req.query?.clickId;
+    const uid = uidParam !== undefined ? String(uidParam) : undefined;
+    const clickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
+
+    const startToken = generateStartToken();
+    const ip = req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() || req.ip || null;
+    const ua = req.get('user-agent') || null;
+
+    try {
+      await query(
+        `INSERT INTO clicks (id, offer_id, uid, click_id, start_token, ip, ua)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [uuid(), offerId, uid ?? null, clickId ?? null, startToken, ip, ua]
+      );
+    } catch (error) {
+      if (error?.code === '23505') {
+        return res.status(503).json({ ok: false, error: 'temporary token collision, retry' });
+      }
+      console.error('click insert error', { error });
+      return res.status(500).json({ ok: false, error: 'failed to store click' });
+    }
+
+    console.log('click captured', {
+      offer_id: offerId,
+      uid,
+      click_id: clickId,
+      start_token: startToken,
+    });
+
+    const redirectUrl = `https://t.me/${botUsername}?start=${startToken}`;
+    return res.redirect(302, redirectUrl);
   });
 
   app.post('/debug/complete', requireDebug, async (req, res) => {
-    try {
-      const {
-        offer_id: offerIdRaw,
-        uid: uidRaw,
-        status = 'approved'
-      } = req.body || {};
+    const {
+      offer_id: offerIdRaw,
+      tg_id: tgIdRaw,
+      uid: uidRaw,
+      click_id: clickIdRaw,
+      event: eventRaw,
+      payout_cents: payoutCents,
+    } = req.body || {};
 
-      const offer_id = (offerIdRaw ?? '').toString().trim();
-      const uid = (uidRaw ?? '').toString().trim();
-      if (!offer_id || !uid) {
-        return res.status(400).json({ ok: false, error: 'offer_id and uid are required' });
-      }
+    const offer_id = offerIdRaw ? String(offerIdRaw) : '';
+    const tg_id = tgIdRaw ? Number.parseInt(String(tgIdRaw), 10) : NaN;
+    const uid = uidRaw ? String(uidRaw) : undefined;
+    const click_id = clickIdRaw ? String(clickIdRaw) : undefined;
+    const event = eventRaw ? String(eventRaw) : '';
+    const payout_cents = payoutCents !== undefined ? Number.parseInt(String(payoutCents), 10) : undefined;
+    const normalizedPayout = Number.isNaN(payout_cents) ? undefined : payout_cents;
 
-      await sendCpaPostback({ offer_id, uid, status });
-      return res.json({ ok: true });
-    } catch (e) {
-      console.error('debug/complete error', {
-        status: e?.response?.status,
-        message: e?.message
-      });
-      return res.status(500).json({ ok: false, error: e.message });
-    }
-  });
-
-  app.get('/click/:offerId', async (req, res) => {
-    const offerId = req.params.offerId;
-    if (!isUUID(offerId)) {
-      return res.status(400).send('offer_id must be UUID');
-    }
-    const uid = (req.query.sub || req.query.uid || req.query.click_id || '').toString();
-    const subs = { ...req.query };
-    if (!uid) return res.status(400).send('Missing click_id/sub');
-
-    const tkn = shortToken();
-    const exp = new Date(Date.now() + 1000 * 60 * 30);
-
-    await query('INSERT INTO clicks(id, offer_id, uid, subs) VALUES($1,$2,$3,$4)', [uuid(), offerId, uid, subs]);
-    await query(
-      'INSERT INTO start_tokens(token, offer_id, uid, exp_at) VALUES($1,$2,$3,$4) ON CONFLICT (token) DO NOTHING',
-      [tkn, offerId, uid, exp]
-    );
-
-    const url = `https://t.me/${(await bot.telegram.getMe()).username}?start=${tkn}`;
-    res.redirect(302, url);
-  });
-
-  app.get('/s/:shareToken', async (req, res) => {
-    const to = (req.query.to || 'https://t.me').toString();
-    res.redirect(302, to);
-  });
-
-  app.post('/postbacks/relay', async (req, res) => {
-    const offer_id_raw = req.body?.offer_id;
-    const user_id_raw = req.body?.user_id;
-    const event_raw = req.body?.event;
-    const meta = req.body?.meta;
-
-    const offer_id = (offer_id_raw ?? '').toString().trim();
-    const user_id = (user_id_raw ?? '').toString().trim();
-    const event = (event_raw ?? '').toString().trim();
-
-    if (!offer_id || !user_id || !event) {
-      return res.status(400).json({ ok: false, error: 'missing fields' });
+    if (!isUUID(offer_id)) {
+      return res.status(400).json({ ok: false, error: 'offer_id must be UUID' });
     }
 
-    const attr = await query('SELECT uid FROM attribution WHERE offer_id=$1 AND user_id=$2', [offer_id, user_id]);
-    if (!attr.rowCount) return res.status(404).json({ ok: false, error: 'no attribution' });
-    const uid = attr.rows[0].uid;
+    if (!event) {
+      return res.status(400).json({ ok: false, error: 'event is required' });
+    }
 
-    const ts = Math.floor(Date.now() / 1000);
-    const payload = { click_id: uid, offer_id, event, ts };
-    const sig = hmacSHA256Hex(config.cpaSecret, `${uid}|${offer_id}|${event}|${ts}`);
+    if (Number.isNaN(tg_id)) {
+      return res.status(400).json({ ok: false, error: 'tg_id must be numeric' });
+    }
 
     try {
-      await axios.post(config.cpaPostbackUrl, { ...payload, sig, status: 1 });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error('postbacks/relay error', {
-        offer_id,
-        uid,
-        event,
-        status: e?.response?.status,
-        message: e?.message
-      });
-      res.status(502).json({ ok: false, error: 'cpa postback failed' });
+      const result = await sendPostback({ offer_id, tg_id, uid, click_id, event, payout_cents: normalizedPayout });
+      return res.json({ ok: true, status: result.status ?? null, signature: result.signature, dedup: !!result.dedup, dryRun: !!result.dryRun });
+    } catch (error) {
+      console.error('debug/complete error', error);
+      return res.status(502).json({ ok: false, error: error?.message || 'postback failed' });
     }
+  });
+
+  app.get('/debug/last', requireDebug, async (req, res) => {
+    const tgIdRaw = req.query?.tg_id;
+    const tgId = tgIdRaw ? Number.parseInt(String(tgIdRaw), 10) : NaN;
+    if (Number.isNaN(tgId)) {
+      return res.status(400).json({ ok: false, error: 'tg_id must be numeric' });
+    }
+
+    const limit = 5;
+    const [clicks, attributions, events, postbacks] = await Promise.all([
+      query('SELECT * FROM clicks WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
+      query('SELECT * FROM attribution WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
+      query('SELECT * FROM events WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
+      query('SELECT * FROM postbacks WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
+    ]);
+
+    return res.json({
+      ok: true,
+      data: {
+        clicks: clicks.rows,
+        attribution: attributions.rows,
+        events: events.rows,
+        postbacks: postbacks.rows,
+      },
+    });
   });
 
   return app;

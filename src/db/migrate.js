@@ -1,85 +1,67 @@
+import { fileURLToPath } from 'node:url';
 import { query } from './index.js';
 
-const sql = `
-CREATE TABLE IF NOT EXISTS offers (
-  id UUID PRIMARY KEY,
-  advertiser_id UUID,
-  target_url TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  premium_rate INT,
-  base_rate INT NOT NULL,
-  caps_total INT DEFAULT 0,
-  caps_window JSONB,
-  reaction_whitelist JSONB,
-  chat_ref JSONB,
-  status TEXT DEFAULT 'active',
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
+const MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS clicks (
-  id UUID PRIMARY KEY,
-  offer_id UUID NOT NULL,
-  uid TEXT NOT NULL,
-  subs JSONB,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS start_tokens (
-  token TEXT PRIMARY KEY,
-  offer_id UUID NOT NULL,
-  uid TEXT NOT NULL,
-  exp_at TIMESTAMPTZ NOT NULL
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  offer_id uuid NOT NULL,
+  uid text,
+  click_id text,
+  start_token text UNIQUE NOT NULL,
+  tg_id bigint,
+  ip text,
+  ua text,
+  created_at timestamptz DEFAULT now(),
+  used_at timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS attribution (
-  user_id BIGINT NOT NULL,
-  offer_id UUID NOT NULL,
-  uid TEXT NOT NULL,
-  is_premium BOOLEAN DEFAULT FALSE,
-  first_seen TIMESTAMPTZ DEFAULT now(),
-  last_seen TIMESTAMPTZ DEFAULT now(),
-  PRIMARY KEY (user_id, offer_id)
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  click_id uuid REFERENCES clicks(id),
+  offer_id uuid NOT NULL,
+  uid text,
+  tg_id bigint NOT NULL,
+  state text NOT NULL,
+  created_at timestamptz DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS events (
-  id UUID PRIMARY KEY,
-  offer_id UUID NOT NULL,
-  uid TEXT NOT NULL,
-  user_id BIGINT NOT NULL,
-  event_type TEXT NOT NULL,
-  chat_id BIGINT,
-  message_id BIGINT,
-  thread_id BIGINT,
-  poll_id TEXT,
-  payload JSONB,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  idempotency_key TEXT UNIQUE
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  offer_id uuid NOT NULL,
+  tg_id bigint NOT NULL,
+  type text NOT NULL,
+  created_at timestamptz DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS postbacks (
-  id UUID PRIMARY KEY,
-  offer_id UUID NOT NULL,
-  uid TEXT NOT NULL,
-  url TEXT NOT NULL,
-  payload JSONB NOT NULL,
-  status TEXT DEFAULT 'pending',
-  attempts INT DEFAULT 0,
-  last_try_at TIMESTAMPTZ
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  offer_id uuid NOT NULL,
+  tg_id bigint NOT NULL,
+  uid text,
+  event text NOT NULL,
+  http_status int,
+  status text,
+  error text,
+  created_at timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS offer_audit_log (
-  id UUID PRIMARY KEY,
-  offer_id UUID NOT NULL,
-  action TEXT NOT NULL,
-  user_id BIGINT,
-  chat_id BIGINT,
-  details JSONB,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS offer_audit_log_offer_idx ON offer_audit_log(offer_id);
+CREATE INDEX IF NOT EXISTS idx_clicks_token ON clicks(start_token);
+CREATE INDEX IF NOT EXISTS idx_attr_tg ON attribution(tg_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_tg ON events(tg_id, created_at DESC);
 `;
 
-await query(sql);
-console.log('Migration complete');
-process.exit(0);
+export async function runMigrations() {
+  await query(MIGRATION_SQL);
+}
+
+async function main() {
+  await runMigrations();
+  console.log('Migration complete');
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().then(() => process.exit(0)).catch((error) => {
+    console.error('Migration failed', error);
+    process.exit(1);
+  });
+}

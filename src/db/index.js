@@ -1,8 +1,23 @@
 import { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { uuid } from '../util/id.js';
 
-const pool = new Pool({ connectionString: config.dbUrl });
+let pool;
+
+if (config.dbUrl.startsWith('pgmem://')) {
+  const { newDb } = await import('pg-mem');
+  const db = newDb({ autoCreateForeignKeyIndices: true });
+  db.public.registerFunction({
+    name: 'gen_random_uuid',
+    returns: 'uuid',
+    implementation: () => randomUUID(),
+  });
+  const adapter = db.adapters.createPg();
+  pool = new adapter.Pool();
+} else {
+  pool = new Pool({ connectionString: config.dbUrl });
+}
 
 export async function query(q, params) {
   const client = await pool.connect();
