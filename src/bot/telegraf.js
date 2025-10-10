@@ -63,10 +63,10 @@ export async function handleStart(ctx) {
 
   try {
     const { rows } = await query(
-      `SELECT c.id, c.offer_id, c.uid, c.click_id, o.target_url, o.event_type
+      `SELECT c.id, c.offer_id, c.uid, o.target_url, o.event_type
        FROM clicks c
        JOIN offers o ON o.id = c.offer_id
-       WHERE c.start_token = $1 AND c.used_at IS NULL
+       WHERE c.start_token = $1
        ORDER BY c.created_at DESC
        LIMIT 1`,
       [startToken]
@@ -74,27 +74,46 @@ export async function handleStart(ctx) {
 
     if (!rows.length) {
       await ctx.reply('Ссылка устарела');
-      console.warn('start token not found or already used', { start_token: startToken, tg_id: tgId });
+      console.warn('start token not found', { start_token: startToken, tg_id: tgId });
       return;
     }
 
     const click = rows[0];
+
+    const updateResult = await query(
+      `UPDATE clicks
+         SET tg_id = $1,
+             used_at = now()
+       WHERE id = $2 AND (tg_id IS NULL OR tg_id = $1)
+       RETURNING id`,
+      [tgId, click.id]
+    );
+
+    if (!updateResult.rowCount) {
+      await ctx.reply('Ссылка уже использована другим пользователем.');
+      console.warn('start token already claimed', { start_token: startToken, tg_id: tgId });
+      return;
+    }
+
+    const attributionId = uuid();
+
     await query(
       `INSERT INTO attribution (id, click_id, offer_id, uid, tg_id, state)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [uuid(), click.id, click.offer_id, click.uid, tgId, 'started']
+       VALUES ($1, $2, $3, $4, $5, 'started')`,
+      [attributionId, click.id, click.offer_id, click.uid ?? null, tgId]
     );
-    await query('UPDATE clicks SET used_at = now(), tg_id = $1 WHERE id = $2', [tgId, click.id]);
+
     console.log('attribution started', {
       tg_id: tgId,
       offer_id: click.offer_id,
+      click_id: click.id,
       start_token: startToken,
     });
 
     if (click.event_type === JOIN_GROUP_EVENT && click.target_url) {
       await ctx.reply(
-        'Нажмите, чтобы вступить в группу:',
-        Markup.inlineKeyboard([[Markup.button.url('Вступить в группу', click.target_url)]])
+        'Нажмите, чтобы вступить в группу. После вступления мы автоматически зафиксируем событие.',
+        Markup.inlineKeyboard([[Markup.button.url('✅ Вступить в группу', click.target_url)]])
       );
       return;
     }
@@ -146,11 +165,12 @@ async function handleChatMember(ctx, next) {
 
   try {
     const { rows } = await query(
-      `SELECT a.id, a.offer_id, a.uid, a.click_id, a.created_at, c.click_id AS external_click_id, o.event_type
+      `SELECT a.id, a.offer_id, a.uid, a.click_id, a.created_at, o.event_type
        FROM attribution a
-       JOIN clicks c ON c.id = a.click_id
        JOIN offers o ON o.id = a.offer_id
-       WHERE a.tg_id = $1 AND a.state = 'started'
+       WHERE a.tg_id = $1
+         AND a.state = 'started'
+         AND a.created_at >= now() - interval '24 hours'
        ORDER BY a.created_at DESC
        LIMIT 1`,
       [tgId]
@@ -170,8 +190,7 @@ async function handleChatMember(ctx, next) {
       return next();
     }
 
-    await query('INSERT INTO events (id, offer_id, tg_id, type) VALUES ($1, $2, $3, $4)', [
-      uuid(),
+    await query('INSERT INTO events (offer_id, tg_id, type) VALUES ($1, $2, $3)', [
       attribution.offer_id,
       tgId,
       JOIN_GROUP_EVENT,
@@ -184,7 +203,7 @@ async function handleChatMember(ctx, next) {
         offer_id: attribution.offer_id,
         tg_id: tgId,
         uid: attribution.uid,
-        click_id: attribution.external_click_id,
+        click_id: attribution.click_id,
         event: JOIN_GROUP_EVENT,
       });
     } catch (error) {

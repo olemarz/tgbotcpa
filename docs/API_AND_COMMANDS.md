@@ -13,10 +13,9 @@
 1. **Ввод ссылки** (`Step.TARGET_URL`): проверка формата `https://t.me/...`, hostname ∈ {t.me, telegram.me, telegram.dog}. Функции `parseTelegramUrl` и `buildChatLookup` валидируют ID/username, запрещают инвайт-ссылки (`t.me/+...`).
 2. **Выбор типа события** (`Step.EVENT_TYPE`): inline-клавиатура (`buildEventKeyboard`) с типами из `EVENT_TYPES`. `ensureEventCompatibility` проверяет соответствие типа и ссылки (например, для реакций требуется `messageId`).
 3. **Ставки** (`Step.BASE_RATE` и `Step.PREMIUM_RATE`): ввод чисел, минимум берётся из `config.MIN_RATES` (например, join_group ≥ 5/10). `parseNumber` приводит ввод, `ensureMinRate` проверяет пороги.
-4. **Капы** (`Step.CAPS_TOTAL`, `Step.CAPS_WINDOW`): принимает целое число (0 = без лимита) и строку формата `10/day`, `5/week`, `0`. `parseCapsWindow` возвращает объект `{ size, unit }` или `null`.
-5. **Временной таргетинг** (`Step.TIME_TARGETING`): inline-предустановки (`timeTargetingPresets`) или ручной JSON (`Step.TIME_TARGETING_MANUAL`). При ручном вводе ожидается JSON с массивами `BYDAY`, `BYHOUR`.
-6. **Название и slug** (`Step.OFFER_NAME`, `Step.OFFER_SLUG`): название произвольное. Для slug используется `slugify`/`ensureUniqueSlug`; пользователь может оставить авто-slug (`-`) или ввести свой (3–60 символов, латиница/цифры/тире).
-7. **Подтверждение** (`Step.CONFIRM`): бот выводит сводку (`buildSummary`), кнопки «✅ Запустить» / «✏️ Исправить». При подтверждении создаётся запись в таблице `offers`, аудит (`insertOfferAuditLog`), и отправляется итоговый URL вида `https://<BASE_URL_HOST>/click/<offer_id>?uid={your_uid}`.
+4. **Кап** (`Step.CAPS_TOTAL`): принимает целое число от 10 и выше. Значения < 10 отвергаются с подсказкой «Минимум 10…».
+5. **Название и slug** (`Step.OFFER_NAME`, `Step.OFFER_SLUG`): название произвольное. Для slug используется `slugify`/`ensureUniqueSlug`; пользователь может оставить авто-slug (`-`) или ввести свой (3–60 символов, латиница/цифры/тире).
+6. **Подтверждение** (`Step.CONFIRM`): бот выводит сводку (`buildSummary`), кнопки «✅ Запустить» / «✏️ Исправить». При подтверждении создаётся запись в таблице `offers`, аудит (`insertOfferAuditLog`), и отправляется итоговый URL вида `https://<BASE_URL_HOST>/click/<offer_id>?uid={your_uid}`.
 
 Дополнительно:
 - Команды **«Отмена»/`/cancel`** завершают сцену (`cancelWizard`).
@@ -37,7 +36,7 @@
 | `POST /debug/complete` | Триггер ручного постбека в CPA. | Тот же debug-token; тело: `offer_id`, `uid`, опционально `status`. | `{ ok: true }` или ошибки. |
 
 ### CPA Postback
-`sendCpaPostback(payload)` формирует подпись `x-signature = HMAC_SHA256(body, config.cpaSecret)` при наличии `CPA_PB_SECRET`. Таймаут запроса — 5 секунд. Ошибки логируются с `offer_id`, `uid`, `event`.
+`sendCpaPostback(payload)` формирует подпись `X-Signature = HMAC_SHA256(body, config.cpaSecret)` при наличии `CPA_PB_SECRET`. Таймаут запроса — 4 секунды (конфигурируется). Ошибки логируются с `offer_id`, `uid`, `event`.
 
 ### Авторизация debug-endpoints
 Middleware `requireDebug` в `src/api/app.js` сравнивает `x-debug-token` и `process.env.DEBUG_TOKEN`. При отсутствии заголовка или неверном значении — 401.

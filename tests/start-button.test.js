@@ -51,13 +51,24 @@ describe('bot.start', () => {
     assert.equal(replies.length, 1);
 
     const [text, extra] = replies[0];
-    assert.equal(text, 'Нажмите, чтобы вступить в группу:');
+    assert.equal(
+      text,
+      'Нажмите, чтобы вступить в группу. После вступления мы автоматически зафиксируем событие.'
+    );
     const button = extra?.reply_markup?.inline_keyboard?.[0]?.[0];
-    assert.equal(button?.text, 'Вступить в группу');
+    assert.equal(button?.text, '✅ Вступить в группу');
     assert.equal(button?.url, OFFER_URL);
 
-    const { rows: attributionRows } = await query('SELECT state FROM attribution WHERE tg_id = $1', [ctx.from.id]);
+    const { rows: attributionRows } = await query(
+      'SELECT click_id, state FROM attribution WHERE tg_id = $1',
+      [ctx.from.id]
+    );
     assert.equal(attributionRows.length, 1);
     assert.equal(attributionRows[0].state, 'started');
+    assert.equal(attributionRows[0].click_id, clickId);
+
+    const { rows: clickRows } = await query('SELECT tg_id FROM clicks WHERE id = $1', [clickId]);
+    assert.equal(clickRows.length, 1);
+    assert.equal(Number(clickRows[0].tg_id), ctx.from.id);
   });
 });

@@ -65,7 +65,7 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-signature': signature,
+        'X-Signature': signature,
       },
       body: payloadJson,
       signal: controller.signal,

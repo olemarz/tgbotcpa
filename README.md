@@ -12,7 +12,9 @@ Minimal MVP to track Telegram join/reaction/comment/poll/share events and send p
 6. `pm2 start ecosystem.config.js && pm2 save`
 7. Expose `PORT` via Nginx or Cloudflare Tunnel and set Telegram webhook:
    ```bash
-   curl -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook"      -d "url=$BASE_URL/bot/webhook"      -d 'allowed_updates=["chat_member","chat_join_request","message_reaction","message_reaction_count","poll_answer","message","channel_post","pre_checkout_query","successful_payment"]'
+   curl -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+     -d "url=$BASE_URL/bot/webhook" \
+     -d 'allowed_updates=["message","callback_query","chat_member","my_chat_member"]'
    ```
 
 ## Deploy (GitHub Actions → SSH)
@@ -115,9 +117,9 @@ forward сообщений из группы/канала; от 2 звезды /
 ## Как создать оффер через /ads
 1. В Telegram напишите боту команду `/ads`.
 2. Укажите целевой URL в формате `https://t.me/...`.
-3. Выберите тип целевого действия и задайте ставки (не ниже минимальных из мастера).
-4. Настройте лимиты, окно капа и временной таргетинг (пресеты или JSON).
-5. Введите название оффера, подтвердите slug либо отправьте свой.
-6. Проверьте карточку и подтвердите создание — бот пришлёт кликабельную ссылку вида `https://<BASE_URL_HOST>/click/<OFFER_ID>?uid={your_uid}`.
-7. Замените `{your_uid}` на реальный `uid`/`click_id` из вашей CPA-сети перед раздачей ссылки.
+3. Выберите тип целевого действия.
+4. Введите базовую ставку (не ниже минимальной) и ставку для премиум-пользователей.
+5. Укажите общий лимит конверсий — целое число от 10 и выше.
+6. Введите название оффера и при необходимости измените slug.
+7. Проверьте карточку и подтвердите создание — бот пришлёт кликабельную ссылку вида `https://<BASE_URL_HOST>/click/<OFFER_ID>?uid={your_uid}`. Перед раздачей замените плейсхолдер на реальный `uid`/`click_id` из CPA-сети.
 
