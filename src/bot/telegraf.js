@@ -32,41 +32,13 @@ const stage = new Scenes.Stage([adsWizard]);
 bot.use(stage.middleware());
 
 // ---- Команды ----
-bot.start(async (ctx) => {
-  const startToken = ctx.startPayload?.trim();
-  const tgId = ctx.from?.id;
 
-  if (startToken && tgId) {
-    try {
-      const { rows } = await query(
-        `SELECT id, offer_id, uid, click_id
-         FROM clicks
-         WHERE start_token = $1 AND used_at IS NULL
-         LIMIT 1`,
-        [startToken]
-      );
+const JOIN_GROUP_EVENT = 'join_group';
+const CHAT_MEMBER_TYPES = new Set(['group', 'supergroup', 'channel']);
+const JOIN_STATUSES = new Set(['member', 'administrator', 'creator']);
+const ATTRIBUTION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
-      if (rows.length) {
-        const click = rows[0];
-        await query(
-          `INSERT INTO attribution (id, click_id, offer_id, uid, tg_id, state)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [uuid(), click.id, click.offer_id, click.uid, tgId, 'started']
-        );
-        await query('UPDATE clicks SET used_at = now(), tg_id = $1 WHERE id = $2', [tgId, click.id]);
-        console.log('attribution started', {
-          tg_id: tgId,
-          offer_id: click.offer_id,
-          start_token: startToken,
-        });
-      } else {
-        console.warn('start token not found or already used', { start_token: startToken, tg_id: tgId });
-      }
-    } catch (error) {
-      console.error('start handler attribution error', { error, start_token: startToken, tg_id: tgId });
-    }
-  }
-
+async function sendDefaultStartReply(ctx) {
   await ctx.reply(
     '👋 Привет! Бот на вебхуке готов. Напиши /whoami или /ads',
     Markup.inlineKeyboard([
@@ -78,7 +50,62 @@ bot.start(async (ctx) => {
       ]
     ])
   );
-});
+}
+
+export async function handleStart(ctx) {
+  const startToken = ctx.startPayload?.trim();
+  const tgId = ctx.from?.id;
+
+  if (!startToken || !tgId) {
+    await sendDefaultStartReply(ctx);
+    return;
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT c.id, c.offer_id, c.uid, c.click_id, o.target_url, o.event_type
+       FROM clicks c
+       JOIN offers o ON o.id = c.offer_id
+       WHERE c.start_token = $1 AND c.used_at IS NULL
+       ORDER BY c.created_at DESC
+       LIMIT 1`,
+      [startToken]
+    );
+
+    if (!rows.length) {
+      await ctx.reply('Ссылка устарела');
+      console.warn('start token not found or already used', { start_token: startToken, tg_id: tgId });
+      return;
+    }
+
+    const click = rows[0];
+    await query(
+      `INSERT INTO attribution (id, click_id, offer_id, uid, tg_id, state)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [uuid(), click.id, click.offer_id, click.uid, tgId, 'started']
+    );
+    await query('UPDATE clicks SET used_at = now(), tg_id = $1 WHERE id = $2', [tgId, click.id]);
+    console.log('attribution started', {
+      tg_id: tgId,
+      offer_id: click.offer_id,
+      start_token: startToken,
+    });
+
+    if (click.event_type === JOIN_GROUP_EVENT && click.target_url) {
+      await ctx.reply(
+        'Нажмите кнопку ниже, чтобы вступить в группу — после вступления мы зафиксируем событие автоматически.',
+        Markup.inlineKeyboard([[Markup.button.url('Вступить в группу', click.target_url)]])
+      );
+      return;
+    }
+  } catch (error) {
+    console.error('start handler attribution error', { error, start_token: startToken, tg_id: tgId });
+  }
+
+  await sendDefaultStartReply(ctx);
+}
+
+bot.start(handleStart);
 
 bot.command('whoami', async (ctx) => {
   try {
@@ -106,25 +133,23 @@ bot.on('text', async (ctx, next) => {
   return next();
 });
 
-const CHAT_MEMBER_TYPES = new Set(['group', 'supergroup', 'channel']);
-const JOIN_STATUSES = new Set(['member', 'administrator', 'creator']);
-const ATTRIBUTION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+async function handleChatMember(ctx, next) {
+  const update = ctx.update?.chat_member ?? ctx.update?.my_chat_member;
+  const chatType = update?.chat?.type ?? ctx.chat?.type;
+  const newMember = update?.new_chat_member;
+  const tgId = newMember?.user?.id;
+  const status = newMember?.status;
 
-bot.on('chat_member', async (ctx, next) => {
-  const update = ctx.update?.chat_member;
-  const chatType = ctx.chat?.type;
-  const tgId = update?.new_chat_member?.user?.id;
-  const status = update?.new_chat_member?.status;
-
-  if (!update || !CHAT_MEMBER_TYPES.has(chatType) || !JOIN_STATUSES.has(status) || !tgId) {
+  if (!update || !CHAT_MEMBER_TYPES.has(chatType) || !JOIN_STATUSES.has(status) || !tgId || newMember.user?.is_bot) {
     return next();
   }
 
   try {
     const { rows } = await query(
-      `SELECT a.id, a.offer_id, a.uid, a.click_id, a.created_at, c.click_id AS external_click_id
+      `SELECT a.id, a.offer_id, a.uid, a.click_id, a.created_at, c.click_id AS external_click_id, o.event_type
        FROM attribution a
        JOIN clicks c ON c.id = a.click_id
+       JOIN offers o ON o.id = a.offer_id
        WHERE a.tg_id = $1 AND a.state = 'started'
        ORDER BY a.created_at DESC
        LIMIT 1`,
@@ -136,6 +161,10 @@ bot.on('chat_member', async (ctx, next) => {
     }
 
     const attribution = rows[0];
+    if (attribution.event_type !== JOIN_GROUP_EVENT) {
+      return next();
+    }
+
     const createdAt = new Date(attribution.created_at);
     if (Number.isNaN(createdAt.getTime()) || Date.now() - createdAt.getTime() > ATTRIBUTION_LOOKBACK_MS) {
       return next();
@@ -145,7 +174,7 @@ bot.on('chat_member', async (ctx, next) => {
       uuid(),
       attribution.offer_id,
       tgId,
-      'join_group',
+      JOIN_GROUP_EVENT,
     ]);
 
     await query('UPDATE attribution SET state = $1 WHERE id = $2', ['converted', attribution.id]);
@@ -156,7 +185,7 @@ bot.on('chat_member', async (ctx, next) => {
         tg_id: tgId,
         uid: attribution.uid,
         click_id: attribution.external_click_id,
-        event: 'join_group',
+        event: JOIN_GROUP_EVENT,
       });
     } catch (error) {
       console.error('sendPostback error', {
@@ -170,10 +199,14 @@ bot.on('chat_member', async (ctx, next) => {
   }
 
   return next();
-});
+}
+
+bot.on('chat_member', handleChatMember);
+bot.on('my_chat_member', handleChatMember);
 
 // ---- Экспорт обработчика вебхука для Express (всегда 200) ----
-export const webhookCallback = bot.webhookCallback('/bot/webhook');
+const webhookPath = config.webhookPath || '/bot/webhook';
+export const webhookCallback = bot.webhookCallback(webhookPath);
 
 export { bot };
 export default bot;

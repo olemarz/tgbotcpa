@@ -2,6 +2,22 @@ import { fileURLToPath } from 'node:url';
 import { query } from './index.js';
 
 const MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS offers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  target_url text NOT NULL,
+  event_type text NOT NULL,
+  name text,
+  slug text UNIQUE,
+  base_rate int,
+  premium_rate int,
+  caps_total int,
+  caps_window interval,
+  time_targeting jsonb,
+  chat_ref text,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS clicks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   offer_id uuid NOT NULL,

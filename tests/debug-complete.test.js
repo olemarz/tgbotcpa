@@ -7,7 +7,7 @@ import { createApp } from '../src/api/app.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { query } from '../src/db/index.js';
 import { uuid } from '../src/util/id.js';
-import { _reset as resetIdempotency } from '../src/util/idempoty.js';
+import { _reset as resetIdempotency } from '../src/util/idempotency.js';
 
 const app = createApp();
 
