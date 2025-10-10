@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
-import crypto from 'node:crypto';
 import axios from 'axios';
+import crypto from 'node:crypto';
+
 import { config } from '../config.js';
 import { query } from '../db/index.js';
 import { uuid, shortToken } from '../util/id.js';
@@ -45,6 +46,11 @@ export function createApp() {
   app.use(bodyParser.json());
   app.use(bodyParser.urlencoded({ extended: true }));
 
+  app.get('/health', (_req, res) => res.json({ ok: true }));
+
+  const webhookPath = process.env.WEBHOOK_PATH || '/bot/webhook';
+  app.post(webhookPath, webhookCallback, (_req, res) => res.sendStatus(200));
+
   app.post('/debug/seed_offer', requireDebug, async (req, res) => {
     try {
       const { target_url, event_type, name, slug, base_rate, premium_rate } = req.body || {};
@@ -85,10 +91,6 @@ export function createApp() {
       return res.status(500).json({ ok: false, error: e.message });
     }
   });
-
-  app.get('/health', (req, res) => res.json({ ok: true }));
-
-  app.post('/bot/webhook', webhookCallback);
 
   app.get('/click/:offerId', async (req, res) => {
     const offerId = req.params.offerId;
