@@ -1,17 +1,17 @@
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session, Markup } from 'telegraf';
+import TelegrafPkg, { Telegraf, Scenes, session, Markup } from 'telegraf';
 import adsWizard from './adsWizard.js';
-import { config } from '../config.js';
 import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { sendPostback } from '../services/postback.js';
 
 // ---- Инициализация бота ----
-if (!config.botToken) {
+const token = process.env.BOT_TOKEN;
+if (!token) {
   throw new Error('BOT_TOKEN is required');
 }
 
-const bot = new Telegraf(config.botToken);
+export const bot = new Telegraf(token);
 
 // лёгкий лог апдейтов (debug)
 bot.use(async (ctx, next) => {
@@ -224,17 +224,26 @@ bot.on('chat_member', handleChatMember);
 bot.on('my_chat_member', handleChatMember);
 
 // ---- Экспорт обработчика вебхука для Express (всегда 200) ----
-const webhookPath = config.webhookPath || '/bot/webhook';
-export const webhookCallback = bot.webhookCallback(webhookPath);
+// Webhook callback, используется сервером
+const secretToken = process.env.WEBHOOK_SECRET || 'prod-secret';
+const webhookPath = process.env.WEBHOOK_PATH || '/bot/webhook';
+const telegrafWebhookFactory =
+  typeof TelegrafPkg?.webhookCallback === 'function' ? TelegrafPkg.webhookCallback : null;
 
-export { bot };
-export default bot;
+export const webhookCallback = telegrafWebhookFactory
+  ? telegrafWebhookFactory(bot, { secretToken })
+  : bot.webhookCallback(webhookPath, { secretToken });
 
-// Для локального запуска (не на PM2/не на вебхуке)
-if (config.nodeEnv === 'dev' && !config.webhookPath) {
-  bot.launch().then(() => console.log('Bot polling on', config.port));
+// Безопасная остановка в webhook-режиме
+function safeStop(reason) {
+  try {
+    bot.stop(reason);
+  } catch (e) {
+    if (!e || e.message !== 'Bot is not running!') {
+      console.error(e);
+    }
+  }
 }
 
-// Корректное завершение
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGINT', () => safeStop('SIGINT'));
+process.once('SIGTERM', () => safeStop('SIGTERM'));
