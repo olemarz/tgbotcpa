@@ -1,0 +1,74 @@
+{
+  "info": {
+    "name": "tgbotcpa tracking",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Tracking flow smoke requests"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base}}/health"
+      }
+    },
+    {
+      "name": "Click",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 302', function () {",
+              "  pm.response.to.have.status(302);",
+              "});",
+              "pm.test('redirects to telegram bot', function () {",
+              "  const location = pm.response.headers.get('Location');",
+              "  pm.expect(location).to.include('t.me/');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base}}/click/{{offerId}}?uid={{uid}}&click_id={{click_id}}"
+      }
+    },
+    {
+      "name": "Debug Complete",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('ok flag present', function () {",
+              "  const data = pm.response.json();",
+              "  pm.expect(data.ok).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-debug-token", "value": "{{DEBUG_TOKEN}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"offer_id\": \"{{offerId}}\",\n  \"tg_id\": {{tg_id}},\n  \"uid\": \"{{uid}}\",\n  \"click_id\": \"{{click_id}}\",\n  \"event\": \"join_group\"\n}"
+        },
+        "url": "{{base}}/debug/complete"
+      }
+    }
+  ]
+}
