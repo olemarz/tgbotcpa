@@ -41,6 +41,7 @@ describe('POST /debug/complete', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
     assert.equal(response.body.status, null);
+    assert.equal(response.body.http_status, null);
     assert.equal(response.body.dryRun, true);
     assert.equal(response.body.dedup, false);
     assert.ok(typeof response.body.signature === 'string');

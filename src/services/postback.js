@@ -45,7 +45,7 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
   const idempotencyKey = buildIdempotencyKey(offer_id, tg_id, event);
   if (isDupe(idempotencyKey)) {
     await recordPostback({ offer_id, tg_id, uid, event, status: 'dedup' });
-    return { ok: true, dedup: true, signature };
+    return { ok: true, dedup: true, signature, status: null, http_status: null };
   }
 
   const timeoutMs = config.postbackTimeoutMs || DEFAULT_TIMEOUT_MS;
@@ -53,7 +53,7 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
   if (!config.cpaPostbackUrl) {
     remember(idempotencyKey, config.idempotencyTtlSec);
     await recordPostback({ offer_id, tg_id, uid, event, status: 'dry-run' });
-    return { ok: true, dryRun: true, signature };
+    return { ok: true, dryRun: true, signature, status: null, http_status: null };
   }
 
   const controller = new AbortController();
@@ -81,7 +81,7 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
     remember(idempotencyKey, config.idempotencyTtlSec);
     await recordPostback({ offer_id, tg_id, uid, event, httpStatus, status: 'sent' });
     console.log('postback sent', { offer_id, tg_id, event, httpStatus });
-    return { ok: true, status: httpStatus, signature };
+    return { ok: true, status: httpStatus ?? null, http_status: httpStatus ?? null, signature };
   } catch (error) {
     await recordPostback({ offer_id, tg_id, uid, event, httpStatus, status: 'failed', error: error?.message });
     console.error('postback send failed', { offer_id, tg_id, event, error: error?.message });

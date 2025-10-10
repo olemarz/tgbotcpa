@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS clicks (
   click_id text,
   start_token text UNIQUE NOT NULL,
   tg_id bigint,
-  ip text,
+  ip inet,
   ua text,
   created_at timestamptz DEFAULT now(),
   used_at timestamptz
@@ -62,8 +62,12 @@ CREATE TABLE IF NOT EXISTS postbacks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_clicks_token ON clicks(start_token);
+CREATE INDEX IF NOT EXISTS idx_clicks_offer ON clicks(offer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_attr_tg ON attribution(tg_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attr_offer ON attribution(offer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_tg ON events(tg_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_offer ON events(offer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_postbacks_tg ON postbacks(tg_id, created_at DESC);
 `;
 
 export async function runMigrations() {
