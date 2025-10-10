@@ -1,16 +1,12 @@
 import { config } from '../config.js';
 import { hmacSHA256Hex } from '../util/hmac.js';
-import { isDupe, remember } from '../util/idempoty.js';
+import { isDupe, remember } from '../util/idempotency.js';
 import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
 
 const DEFAULT_TIMEOUT_MS = 4000;
 
-const buildIdempotencyKey = (offerId, tgId, event) => {
-  const bucketSizeMs = Math.max(1, config.idempotencyTtlSec || 600) * 1000;
-  const bucket = Math.floor(Date.now() / bucketSizeMs);
-  return `${offerId}:${tgId}:${event}:${bucket}`;
-};
+const buildIdempotencyKey = (offerId, tgId, event) => `${offerId}:${tgId}:${event}`;
 
 async function recordPostback({ offer_id, tg_id, uid, event, httpStatus, status, error }) {
   try {
