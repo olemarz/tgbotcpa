@@ -41,6 +41,8 @@ describe('CPA offers API', () => {
        WHERE id = $1`,
       [offerId]
     );
+
+    await query(`UPDATE offers SET payout_cents = premium_rate WHERE id = $1`, [offerId]);
   });
 
   it('rejects requests with invalid API key', async () => {
