@@ -9,41 +9,27 @@ function toTrimmedString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function respond(res, status, payload) {
-  res.status(status).json(payload);
-}
-
-function respond(res, status, payload) {
-  res.status(status).json(payload);
-}
-
-export const waRouter = Router();
-
 waRouter.post('/claim', async (req, res) => {
   const body = req.body ?? {};
   const token = toTrimmedString(body.token);
   const initData = toTrimmedString(body.initData);
 
   if (!token) {
-    respond(res, 400, { ok: false, error: 'TOKEN_REQUIRED' });
-    return;
+    return res.status(400).json({ ok: false, error: 'TOKEN_REQUIRED' });
   }
 
   if (!initData) {
-    respond(res, 400, { ok: false, error: 'INIT_DATA_REQUIRED' });
-    return;
+    return res.status(400).json({ ok: false, error: 'INIT_DATA_REQUIRED' });
   }
 
   const verification = verifyInitData(initData);
   if (!verification.ok || !verification.user?.id) {
-    respond(res, 401, { ok: false, error: verification.error ?? 'INIT_DATA_INVALID' });
-    return;
+    return res.status(401).json({ ok: false, error: verification.error ?? 'INIT_DATA_INVALID' });
   }
 
   const startParam = verification.start_param;
   if (startParam && startParam !== token) {
-    respond(res, 400, { ok: false, error: 'TOKEN_MISMATCH' });
-    return;
+    return res.status(400).json({ ok: false, error: 'TOKEN_MISMATCH' });
   }
 
   const tgId = verification.user.id;
@@ -54,20 +40,20 @@ waRouter.post('/claim', async (req, res) => {
       [tgId, token],
     );
 
-    if (result.rowCount && result.rowCount > 0) {
+    if (result.rowCount > 0) {
       try {
         await bot.telegram.sendMessage(tgId, 'Новая задача доступна: /ads');
       } catch (notifyError) {
         console.error('[wa.claim] notify error', notifyError);
       }
-      respond(res, 200, { ok: true });
-      return;
+
+      return res.json({ ok: true });
     }
 
-    respond(res, 200, { ok: false, error: 'TOKEN_NOT_FOUND' });
+    return res.status(404).json({ ok: false, error: 'TOKEN_NOT_FOUND' });
   } catch (error) {
     console.error('[wa.claim] update error', error);
-    respond(res, 500, { ok: false, error: 'INTERNAL_ERROR' });
+    return res.status(500).json({ ok: false, error: 'SERVER_ERROR' });
   }
 });
 
