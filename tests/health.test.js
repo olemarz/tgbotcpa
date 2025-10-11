@@ -1,4 +1,4 @@
-import './setup-env.js';
+import './setup-env.cjs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import request from 'supertest';

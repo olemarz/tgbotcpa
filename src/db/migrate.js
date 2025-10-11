@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS offers (
 );
 
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS chat_ref jsonb;
-ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_mode text DEFAULT 'any';
+ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_input text;
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_list text[];
 
 CREATE TABLE IF NOT EXISTS clicks (
