@@ -1,7 +1,24 @@
 import { db } from '../db/index.js';
 import { sendPostback } from '../integrations/postback.js';
 
-export type CreateConversionArgs = {
+type CreateConversionArgs = {
+  offer_id: string;
+  tg_id: number;
+  amount_cents: number;
+};
+
+export async function createConversion({ offer_id, tg_id, amount_cents }: CreateConversionArgs) {
+  return db.one(
+    `
+    INSERT INTO conversions(offer_id, tg_id, amount_cents)
+    VALUES($1,$2,$3)
+    RETURNING id
+  `,
+    [offer_id, tg_id, amount_cents]
+  );
+}
+
+type ApproveJoinArgs = {
   offer_id: string;
   tg_id: number;
   click_id?: string | number | null;
