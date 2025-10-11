@@ -1,5 +1,6 @@
+import 'dotenv/config';
 // src/bot/telegraf.js
-import TelegrafPkg, { Telegraf, Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session } from 'telegraf';
 import adsWizard from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
@@ -11,7 +12,9 @@ if (!token) {
   throw new Error('BOT_TOKEN is required');
 }
 
-export const bot = new Telegraf(token);
+export const bot = new Telegraf(token, {
+  handlerTimeout: 10000,
+});
 
 export function logUpdate(ctx, tag = 'update') {
   const u = ctx.update || {};
@@ -231,17 +234,6 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
     console.error('postback error:', e?.message || e);
   }
 });
-
-// ---- Экспорт обработчика вебхука для Express (всегда 200) ----
-// Webhook callback, используется сервером
-const secretToken = process.env.WEBHOOK_SECRET || 'prod-secret';
-const webhookPath = process.env.WEBHOOK_PATH || '/bot/webhook';
-const telegrafWebhookFactory =
-  typeof TelegrafPkg?.webhookCallback === 'function' ? TelegrafPkg.webhookCallback : null;
-
-export const webhookCallback = telegrafWebhookFactory
-  ? telegrafWebhookFactory(bot, { secretToken })
-  : bot.webhookCallback(webhookPath, { secretToken });
 
 // Безопасная остановка в webhook-режиме
 function safeStop(reason) {

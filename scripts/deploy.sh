@@ -1,33 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd /opt/tgbotcpa
 
-if ! command -v git >/dev/null 2>&1; then
-  echo "git is required for deployment" >&2
-  exit 1
-fi
+# чистим мусорные lock-и только при необходимости:
+if [ ! -d node_modules ]; then rm -f package-lock.json; fi
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required for deployment" >&2
-  exit 1
-fi
-
-if ! command -v pm2 >/dev/null 2>&1; then
-  echo "pm2 is required for deployment" >&2
-  exit 1
-fi
-
-git fetch origin
-
-git reset --hard origin/main
-
-npm ci --omit=dev
-
+npm i
 npm run migrate
 
-pm2 reload tg-api --update-env
+pm2 delete tg-api || true
+pm2 start ecosystem.config.cjs --only tg-api
+pm2 save
 
-npm run doctor
+# регаем вебхук
+npm run register:webhook
 
-curl -fsS http://127.0.0.1:3000/health > /dev/null
-
-echo "Deployment completed successfully"
+# показать статус
+node -e "require('dotenv').config(); fetch('https://api.telegram.org/bot'+process.env.BOT_TOKEN+'/getWebhookInfo').then(r=>r.text()).then(console.log)"

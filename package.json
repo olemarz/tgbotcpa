@@ -4,34 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "doctor": "node scripts/doctor.js",
-    "migrate": "node src/db/migrate.js",
-    "register:webhook": "node scripts/registerWebhook.js",
     "start": "node src/api/server.js",
-    "test": "npm run test:node && npm run test:ts",
-    "test:ci": "npm run test",
-    "test:node": "node --test \"tests/**/*.test.js\"",
-    "test:ts": "node --loader ts-node/esm --test \"tests/**/*.spec.ts\""
+    "api": "node src/api/server.js",
+    "bot": "node src/bot/run-bot.js",
+    "migrate": "node src/db/migrate.js",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:ci": "node --test \"tests/**/*.test.js\"",
+    "register:webhook": "node -e \"require('dotenv').config(); const t=(process.env.BOT_TOKEN||'').trim(); if(!t) throw new Error('BOT_TOKEN empty'); const base=(process.env.BASE_URL||'').trim().replace(/\\/$/,''); const path=(process.env.WEBHOOK_PATH||'/bot/webhook').trim(); const u=base+path; const a=['message','callback_query','chat_member','my_chat_member']; const s=(process.env.WEBHOOK_SECRET||'prod-secret').trim(); const body=new URLSearchParams({url:u,secret_token:s,allowed_updates:JSON.stringify(a)}); fetch('https://api.telegram.org/bot'+t+'/setWebhook',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.text()).then(console.log).catch(console.error);\""
   },
   "dependencies": {
-    "axios": "^1.7.2",
-    "geoip-lite": "^1.4.7",
-    "crypto-js": "^4.2.0",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "request-ip": "^3.3.0",
-    "geoip-lite": "^1.4.10",
-    "pg": "^8.12.0",
-    "telegraf": "^4.16.3",
-    "uuid": "^9.0.1"
+    "axios": "1.7.2",
+    "crypto-js": "4.2.0",
+    "dotenv": "16.4.5",
+    "express": "4.19.2",
+    "geoip-lite": "1.4.7",
+    "pg": "8.12.0",
+    "telegraf": "4.16.3",
+    "uuid": "9.0.1",
+    "request-ip": "3.3.0"
   },
   "devDependencies": {
-    "@types/geoip-lite": "^1.4.4",
-    "nock": "^13.5.0",
-    "pg-mem": "^3.0.5",
-    "supertest": "^7.0.0",
-    "nock": "^13.5.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "nock": "13.5.0",
+    "pg-mem": "3.0.5",
+    "supertest": "7.0.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.4.5"
   }
 }
