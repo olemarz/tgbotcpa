@@ -1,6 +1,17 @@
 import { db } from '../db/index.js';
 import { sendPostback } from '../integrations/postback.js';
 
+export async function createConversion({ offer_id, tg_id, amount_cents }) {
+  return db.one(
+    `
+    INSERT INTO conversions(offer_id, tg_id, amount_cents)
+    VALUES($1,$2,$3)
+    RETURNING id
+  `,
+    [offer_id, tg_id, amount_cents]
+  );
+}
+
 export async function approveJoin({ offer_id, tg_id, click_id }) {
   const offer = await db.one(`SELECT payout_cents, postback_url FROM offers WHERE id=$1`, [offer_id]);
   const conv = await db.one(

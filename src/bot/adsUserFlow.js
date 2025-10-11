@@ -280,7 +280,7 @@ export async function handleAdsUserCommand(ctx) {
 
   const offer = await findNextOffer(ctx, session.seen);
   if (!offer) {
-    await ctx.reply('Пока нет подходящих офферов. Попробуйте позже.');
+    await ctx.reply('На сейчас задач нет');
     return;
   }
 
@@ -299,7 +299,7 @@ export async function handleAdsSkip(ctx, offerId) {
 
   const next = await findNextOffer(ctx, session.seen);
   if (!next) {
-    const message = 'Больше офферов не осталось. Возвращайтесь позже!';
+    const message = 'На сейчас задач нет';
     if (ctx.callbackQuery?.message) {
       try {
         await ctx.editMessageText(message, { reply_markup: { inline_keyboard: [] } });
