@@ -1,15 +1,22 @@
 import 'dotenv/config';
-import { createApp } from './app.js';
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
+import { waRouter } from './wa.js';
 
-const app = createApp();
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.resolve(__dirname, '../../public');
+app.use(express.static(publicDir));
+app.use('/api/wa', waRouter);
 
 const WH_PATH = process.env.WEBHOOK_PATH || '/bot/webhook';
 const WH_SECRET = process.env.WEBHOOK_SECRET || 'prod-secret';
-
 app.use(WH_PATH, bot.webhookCallback(WH_PATH, { secretToken: WH_SECRET }));
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('[api] Listening on :' + PORT));
-
-export default app;
+app.get('/health', (_, res) => res.send('ok'));
+app.listen(process.env.PORT || 3000, () => console.log('[api] Listening on :' + (process.env.PORT || 3000)));
