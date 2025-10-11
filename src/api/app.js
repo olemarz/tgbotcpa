@@ -21,8 +21,7 @@ const requireDebug = (req, res, next) => {
   return next();
 };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../../public');
 
 export function createApp() {
@@ -108,7 +107,7 @@ export function createApp() {
     try {
       await query(
         `INSERT INTO offers (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        values
+        values,
       );
     } catch (error) {
       console.error('offer insert error', error);
@@ -149,7 +148,14 @@ export function createApp() {
     }
 
     try {
-      const result = await sendPostback({ offer_id, tg_id, uid, click_id, event, payout_cents: normalizedPayout });
+      const result = await sendPostback({
+        offer_id,
+        tg_id,
+        uid,
+        click_id,
+        event,
+        payout_cents: normalizedPayout,
+      });
       const httpStatus = result.http_status ?? result.status ?? null;
       return res.json({
         ok: true,

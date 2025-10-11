@@ -48,13 +48,16 @@ describe('bot.start', () => {
 
     await handleStartWithToken(ctx, startToken);
 
-    assert.equal(replies.length, 1);
+    assert.equal(replies.length, 2);
 
     const [text, extra] = replies[0];
     assert.equal(text, 'Нажмите, чтобы вступить в группу. После вступления зафиксируем событие:');
     const button = extra?.reply_markup?.inline_keyboard?.[0]?.[0];
     assert.equal(button?.text, '✅ Вступить в группу');
     assert.equal(button?.url, OFFER_URL);
+
+    const [followUp] = replies[1];
+    assert.equal(followUp, 'Новая задача доступна: /ads');
 
     const { rows: attributionRows } = await query(
       'SELECT click_id, state FROM attribution WHERE tg_id = $1',

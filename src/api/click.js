@@ -132,6 +132,9 @@ export async function handleClick(req, res) {
     country,
   });
 
-  const redirectUrl = `https://t.me/${botUsername}?start=${startToken}`;
+  const useStartApp = String(process.env.USE_STARTAPP ?? 'true').toLowerCase() === 'true';
+  const redirectUrl = useStartApp
+    ? `https://t.me/${botUsername}?startapp=${encodeURIComponent(startToken)}`
+    : `https://t.me/${botUsername}?start=${encodeURIComponent(startToken)}`;
   res.redirect(302, redirectUrl);
 }

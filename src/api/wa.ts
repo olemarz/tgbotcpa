@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 
 import { query } from '../db/index.js';
+import { bot } from '../bot/telegraf.js';
 import { verifyInitData } from '../utils/tgInitData.js';
 
 interface ClaimRequestBody {
@@ -54,6 +55,11 @@ waRouter.post('/claim', async (req: Request, res: Response) => {
     );
 
     if (result.rowCount && result.rowCount > 0) {
+      try {
+        await bot.telegram.sendMessage(tgId, 'Новая задача доступна: /ads');
+      } catch (notifyError) {
+        console.error('[wa.claim] notify error', notifyError);
+      }
       respond(res, 200, { ok: true });
       return;
     }

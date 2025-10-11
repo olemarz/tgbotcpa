@@ -1,5 +1,5 @@
 import express from 'express';
-
+import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
 import { verifyInitData } from '../utils/tgInitData.js';
 
@@ -12,6 +12,12 @@ function toTrimmedString(value) {
 function respond(res, status, payload) {
   res.status(status).json(payload);
 }
+
+function respond(res, status, payload) {
+  res.status(status).json(payload);
+}
+
+export const waRouter = Router();
 
 waRouter.post('/claim', async (req, res) => {
   const body = req.body ?? {};
@@ -45,10 +51,15 @@ waRouter.post('/claim', async (req, res) => {
   try {
     const result = await query(
       'UPDATE clicks SET tg_id = $1, used_at = COALESCE(used_at, now()) WHERE start_token = $2',
-      [tgId, token]
+      [tgId, token],
     );
 
     if (result.rowCount && result.rowCount > 0) {
+      try {
+        await bot.telegram.sendMessage(tgId, 'Новая задача доступна: /ads');
+      } catch (notifyError) {
+        console.error('[wa.claim] notify error', notifyError);
+      }
       respond(res, 200, { ok: true });
       return;
     }

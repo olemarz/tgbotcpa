@@ -142,6 +142,10 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
     country,
   });
 
-  const link = `https://t.me/${process.env.BOT_USERNAME}?startapp=${encodeURIComponent(startToken)}`;
+  const useStartApp = String(process.env.USE_STARTAPP ?? 'true').toLowerCase() === 'true';
+  const link = useStartApp
+    ? `https://t.me/${botUsername}?startapp=${encodeURIComponent(startToken)}`
+    : `https://t.me/${botUsername}?start=${encodeURIComponent(startToken)}`;
+
   return res.redirect(link);
 }
