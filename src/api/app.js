@@ -1,11 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
-import { randomBytes } from 'node:crypto';
-
-import { config } from '../config.js';
 import { query } from '../db/index.js';
-import { uuid } from '../util/id.js';
 import { sendPostback } from '../services/postback.js';
 import { webhookCallback } from '../bot/telegraf.js';
 import { parseGeoInput } from '../util/geo.js';
@@ -19,21 +15,6 @@ const requireDebug = (req, res, next) => {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
   return next();
-};
-
-const generateStartToken = () => {
-  const length = 6 + Math.floor(Math.random() * 7);
-  return randomBytes(length).toString('base64url').slice(0, length);
-};
-
-const normalizeIp = (value) => {
-  if (!value) return null;
-  const trimmed = String(value).trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('::ffff:')) {
-    return trimmed.slice('::ffff:'.length);
-  }
-  return trimmed;
 };
 
 export function createApp() {
@@ -61,52 +42,7 @@ export function createApp() {
 
   app.get('/debug/ping', requireDebug, (_req, res) => res.json({ ok: true }));
 
-  app.get('/click/:offerId', async (req, res) => {
-    const { offerId } = req.params;
-    if (!isUUID(offerId)) {
-      return res.status(400).json({ ok: false, error: 'offer_id must be UUID' });
-    }
-
-    const botUsername = config.botUsername || process.env.BOT_USERNAME || '';
-    if (!botUsername) {
-      return res
-        .status(500)
-        .json({ ok: false, error: 'BOT_USERNAME is required. Please set BOT_USERNAME in the environment.' });
-    }
-
-    const uidParam = req.query?.uid ?? req.query?.sub;
-    const clickIdParam = req.query?.click_id ?? req.query?.clickId;
-    const uid = uidParam !== undefined ? String(uidParam) : undefined;
-    const clickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
-
-    const startToken = generateStartToken();
-    const ip = normalizeIp(req.headers['x-forwarded-for']?.toString().split(',')[0] ?? req.ip);
-    const ua = req.get('user-agent') || null;
-
-    try {
-      await query(
-        `INSERT INTO clicks (id, offer_id, uid, click_id, start_token, ip, ua)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [uuid(), offerId, uid ?? null, clickId ?? null, startToken, ip, ua]
-      );
-    } catch (error) {
-      if (error?.code === '23505') {
-        return res.status(503).json({ ok: false, error: 'temporary token collision, retry' });
-      }
-      console.error('click insert error', { error });
-      return res.status(500).json({ ok: false, error: 'failed to store click' });
-    }
-
-    console.log('click captured', {
-      offer_id: offerId,
-      uid,
-      click_id: clickId,
-      start_token: startToken,
-    });
-
-    const redirectUrl = `https://t.me/${botUsername}?start=${startToken}`;
-    return res.redirect(302, redirectUrl);
-  });
+  app.get('/click/:offerId', handleClick);
 
   app.post('/offers', async (req, res) => {
     const {
