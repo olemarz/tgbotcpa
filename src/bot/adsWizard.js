@@ -1,9 +1,13 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Scenes, Markup } from 'telegraf';
 import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
 import { config } from '../config.js';
 import { query, insertOfferAuditLog } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { normalizeToISO2 } from '../util/geo.js';
+import { buildTrackingUrl } from '../utils/tracking-link.js';
 
 const logPrefix = '[adsWizard]';
 
@@ -20,13 +24,9 @@ const minRates = config.MIN_RATES || {};
 
 const allowedTelegramHosts = new Set(['t.me', 'telegram.me', 'telegram.dog']);
 
-const baseUrlOrigin = (() => {
-  try {
-    return new URL(config.baseUrl).origin;
-  } catch (error) {
-    return config.baseUrl;
-  }
-})();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const linksLogPath = path.resolve(__dirname, '../../var/links.log');
 
 const CANCEL_KEYWORDS = new Set(['/cancel', 'отмена', '[отмена]', 'cancel']);
 const BACK_KEYWORDS = new Set(['/back', 'назад', '[назад]']);
@@ -65,6 +65,25 @@ async function getOffersColumns() {
     ).then((res) => new Set(res.rows.map((row) => row.column_name)));
   }
   return offersColumnsPromise;
+}
+
+async function logTrackingLink(offerId, title, trackingUrl) {
+  try {
+    await fs.mkdir(path.dirname(linksLogPath), { recursive: true });
+    const line = `${new Date().toISOString()},${offerId},${JSON.stringify(title ?? '')},${trackingUrl}\n`;
+    await fs.appendFile(linksLogPath, line, 'utf8');
+  } catch (error) {
+    console.error(`${logPrefix} failed to write tracking log`, { offerId, error: error?.message });
+  }
+}
+
+async function notifyChat(telegram, chatId, text) {
+  if (!chatId) return;
+  try {
+    await telegram.sendMessage(chatId, text);
+  } catch (error) {
+    console.error(`${logPrefix} failed to notify chat`, { chatId, error: error?.message });
+  }
 }
 
 async function slugExists(slug) {
@@ -481,6 +500,7 @@ async function promptForStep(ctx, step) {
 
 async function insertOffer(offer, audit) {
   const offerId = uuid();
+  const { url: trackingUrl } = buildTrackingUrl(offerId, { src: 'heypay' });
   const columns = [
     'id',
     'target_url',
@@ -505,6 +525,10 @@ async function insertOffer(offer, audit) {
   ];
 
   const columnsSet = await getOffersColumns();
+  if (columnsSet.has('tracking_url')) {
+    columns.push('tracking_url');
+    values.push(trackingUrl);
+  }
   if (columnsSet.has('caps_window')) {
     columns.push('caps_window');
     values.push(offer.caps_window);
@@ -547,7 +571,7 @@ async function insertOffer(offer, audit) {
     eventType: offer.event_type,
   });
 
-  return insertedId;
+  return { id: insertedId, trackingUrl };
 }
 
 const adsWizard = new Scenes.WizardScene(
@@ -856,11 +880,17 @@ const adsWizard = new Scenes.WizardScene(
 
     const offer = ctx.wizard.state.offer;
     try {
-      const offerId = await insertOffer(offer, ctx.wizard.state.audit);
-      const clickUrl = `${baseUrlOrigin}/click/${offerId}?uid={your_uid}`;
-      await ctx.editMessageText(
-        `✅ Оффер создан!\nСсылка для трафика: ${clickUrl}\nЗамените {your_uid} на значение из вашей CPA-сети.`
-      );
+      const { id: offerId, trackingUrl } = await insertOffer(offer, ctx.wizard.state.audit);
+      const notificationText = `🟢 Кампания #${offerId} активна. CPA ссылка: ${trackingUrl}.`;
+      await ctx.editMessageText(notificationText);
+      if (ctx.from?.id) {
+        await notifyChat(ctx.telegram, ctx.from.id, notificationText);
+      }
+      const operatorChatId = (process.env.OPERATOR_TG_ID || '').trim();
+      if (operatorChatId) {
+        await notifyChat(ctx.telegram, operatorChatId, notificationText);
+      }
+      await logTrackingLink(offerId, offer.name, trackingUrl);
     } catch (error) {
       console.error(`${logPrefix} insert error`, error);
       await ctx.editMessageText('Не удалось сохранить оффер: ' + (error.message || 'ошибка БД'));
