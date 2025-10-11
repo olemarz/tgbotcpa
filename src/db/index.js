@@ -1,4 +1,5 @@
-import { Pool } from 'pg';
+import pg from 'pg';
+const { Pool } = pg;
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { uuid } from '../util/id.js';

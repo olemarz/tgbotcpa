@@ -1,15 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
-import bodyParser from 'body-parser';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
-import { webhookCallback } from '../bot/telegraf.js';
 import { parseGeoInput } from '../util/geo.js';
-import { waRouter } from './wa.js';
-import { handleClick } from './click.js';
 import { uuid } from '../util/id.js';
+import { handleClick } from './click.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -29,28 +24,22 @@ const publicDir = path.resolve(__dirname, '../../public');
 export function createApp() {
   const app = express();
 
-  app.use(bodyParser.json());
-  app.use(bodyParser.urlencoded({ extended: true }));
-  app.use(express.static(publicDir));
+// parsers (Express ≥4.16 — bodyParser не нужен)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-  app.use('/api/wa', waRouter);
+// static WebApp (public/)
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// server.js лежит в src/api → public на уровень выше
+const publicDir = path.resolve(__dirname, '../../public');
+app.use(express.static(publicDir));
 
+// WebApp claim API
+import { waRouter } from './wa.js';
+app.use('/api/wa', waRouter);
   app.get('/health', (_req, res) => res.json({ ok: true }));
-
-  const webhookPath = process.env.WEBHOOK_PATH || '/bot/webhook';
-  app.post(
-    webhookPath,
-    (req, res, next) => {
-      const got = req.headers['x-telegram-bot-api-secret-token'];
-      const need = process.env.WEBHOOK_SECRET || 'prod-secret';
-      if (need && got && got !== need) {
-        console.warn('[tg] bad webhook secret token');
-        return res.sendStatus(401);
-      }
-      return webhookCallback(req, res, next);
-    },
-    (_req, res) => res.sendStatus(200),
-  );
 
   app.get('/debug/ping', requireDebug, (_req, res) => res.json({ ok: true }));
 

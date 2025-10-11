@@ -1,15 +1,12 @@
 module.exports = {
-  apps: [
-    {
-      name: "tg-api",
-      script: "src/api/server.js",
-      watch: false,
-      autorestart: true,
-      time: true,
-      env: {
-        NODE_ENV: "production"
-        // PORT и остальные берутся из .env через dotenv/config в коде.
-      }
-    }
-  ]
+  apps: [{
+    name: "tg-api",
+    cwd: "/opt/tgbotcpa",
+    script: "npm",
+    args: "start",
+    env: { NODE_ENV: "production" },
+    autorestart: true,
+    time: true,
+    max_memory_restart: "300M"
+  }]
 };

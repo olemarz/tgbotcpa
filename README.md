@@ -17,6 +17,14 @@ Minimal MVP to track Telegram join/reaction/comment/poll/share events and send p
      -d 'allowed_updates=["message","callback_query","chat_member","my_chat_member"]'
    ```
 
+## Deploy
+
+```bash
+cd /opt/tgbotcpa
+bash scripts/deploy.sh
+pm2 logs tg-api --lines 120
+```
+
 ## Deploy (GitHub Actions → SSH)
 
 1. Push/merge в `main` → запускается workflow `Deploy via SSH`.
