@@ -44,7 +44,21 @@ export function createApp() {
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   const webhookPath = process.env.WEBHOOK_PATH || '/bot/webhook';
-  app.post(webhookPath, webhookCallback, (_req, res) => res.sendStatus(200));
+  app.post(
+    webhookPath,
+    (req, res, next) => {
+      const got = req.headers['x-telegram-bot-api-secret-token'];
+      const need = process.env.WEBHOOK_SECRET || 'prod-secret';
+      if (need && got && got !== need) {
+        console.warn('[tg] bad webhook secret token');
+        return res.sendStatus(401);
+      }
+      return webhookCallback(req, res, next);
+    },
+    (_req, res) => res.sendStatus(200),
+  );
+
+  app.get('/debug/ping', requireDebug, (_req, res) => res.json({ ok: true }));
 
   app.get('/click/:offerId', async (req, res) => {
     const { offerId } = req.params;

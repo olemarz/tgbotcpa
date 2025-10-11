@@ -2,7 +2,7 @@ import './setup-env.js';
 import assert from 'node:assert/strict';
 import { before, afterEach, describe, it } from 'node:test';
 
-import { handleStart } from '../src/bot/telegraf.js';
+import { handleStartWithToken } from '../src/bot/telegraf.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { query } from '../src/db/index.js';
 import { uuid } from '../src/util/id.js';
@@ -46,15 +46,12 @@ describe('bot.start', () => {
       },
     };
 
-    await handleStart(ctx);
+    await handleStartWithToken(ctx, startToken);
 
     assert.equal(replies.length, 1);
 
     const [text, extra] = replies[0];
-    assert.equal(
-      text,
-      'Нажмите, чтобы вступить в группу. После вступления мы автоматически зафиксируем событие.'
-    );
+    assert.equal(text, 'Нажмите, чтобы вступить в группу. После вступления зафиксируем событие:');
     const button = extra?.reply_markup?.inline_keyboard?.[0]?.[0];
     assert.equal(button?.text, '✅ Вступить в группу');
     assert.equal(button?.url, OFFER_URL);
