@@ -43,7 +43,9 @@ if (!databaseUrl || isPgMem) {
       const startToken = rows[0].start_token;
       assert.ok(startToken && startToken.length >= 6, 'start_token must be generated');
 
-      const expected = `https://t.me/${process.env.BOT_USERNAME}?start=${startToken}`;
+      const useStartApp = String(process.env.USE_STARTAPP ?? 'true').toLowerCase() === 'true';
+      const param = useStartApp ? 'startapp' : 'start';
+      const expected = `https://t.me/${process.env.BOT_USERNAME}?${param}=${encodeURIComponent(startToken)}`;
       assert.equal(location, expected, 'redirect URL must match generated start token');
     });
   });

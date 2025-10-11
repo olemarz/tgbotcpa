@@ -88,10 +88,11 @@ export async function handleStartWithToken(ctx, rawToken) {
     await ctx.reply('Нажмите, чтобы вступить в группу. После вступления зафиксируем событие:', {
       reply_markup: { inline_keyboard: [[{ text: '✅ Вступить в группу', url: target_url }]] },
     });
+    await ctx.reply('Новая задача доступна: /ads');
     return;
   }
 
-  await ctx.reply('Готово! Продолжайте в боте.');
+  await ctx.reply('Новая задача доступна: /ads');
 }
 
 bot.start(async (ctx) => {

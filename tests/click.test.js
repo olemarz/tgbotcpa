@@ -40,7 +40,9 @@ describe('GET /click/:offerId', () => {
     assert.equal(record.click_id, 'c1');
     assert.ok(record.start_token?.length >= 6 && record.start_token.length <= 12);
 
-    const expectedLocation = `https://t.me/${process.env.BOT_USERNAME}?start=${record.start_token}`;
+    const useStartApp = String(process.env.USE_STARTAPP ?? 'true').toLowerCase() === 'true';
+    const param = useStartApp ? 'startapp' : 'start';
+    const expectedLocation = `https://t.me/${process.env.BOT_USERNAME}?${param}=${encodeURIComponent(record.start_token)}`;
     assert.equal(response.headers.location, expectedLocation);
   });
 });

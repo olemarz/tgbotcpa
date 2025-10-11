@@ -1,10 +1,14 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { parseGeoInput } from '../util/geo.js';
 import { uuid } from '../util/id.js';
 import { handleClick } from './click.js';
+import { waRouter } from './wa.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -17,28 +21,19 @@ const requireDebug = (req, res, next) => {
   return next();
 };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../../public');
 
 export function createApp() {
   const app = express();
 
-// parsers (Express ≥4.16 — bodyParser не нужен)
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
-// static WebApp (public/)
-import path from 'path';
-import { fileURLToPath } from 'url';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// server.js лежит в src/api → public на уровень выше
-const publicDir = path.resolve(__dirname, '../../public');
-app.use(express.static(publicDir));
+  app.use(express.static(publicDir));
 
-// WebApp claim API
-import { waRouter } from './wa.js';
-app.use('/api/wa', waRouter);
+  app.use('/api/wa', waRouter);
+
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.get('/debug/ping', requireDebug, (_req, res) => res.json({ ok: true }));
@@ -113,7 +108,7 @@ app.use('/api/wa', waRouter);
     try {
       await query(
         `INSERT INTO offers (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        values
+        values,
       );
     } catch (error) {
       console.error('offer insert error', error);
@@ -154,7 +149,14 @@ app.use('/api/wa', waRouter);
     }
 
     try {
-      const result = await sendPostback({ offer_id, tg_id, uid, click_id, event, payout_cents: normalizedPayout });
+      const result = await sendPostback({
+        offer_id,
+        tg_id,
+        uid,
+        click_id,
+        event,
+        payout_cents: normalizedPayout,
+      });
       const httpStatus = result.http_status ?? result.status ?? null;
       return res.json({
         ok: true,
