@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
+import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
 import { waRouter } from './wa.js';
 import { cpaRouter } from './cpa.js';
 
@@ -20,5 +21,9 @@ const WH_PATH = process.env.WEBHOOK_PATH || '/bot/webhook';
 const WH_SECRET = process.env.WEBHOOK_SECRET || 'prod-secret';
 app.use(WH_PATH, bot.webhookCallback(WH_PATH, { secretToken: WH_SECRET }));
 
-app.get('/health', (_, res) => res.send('ok'));
+console.log(`[App version] commit=${COMMIT} branch=${BRANCH} built_at=${BUILT_AT}`);
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, version: { commit: COMMIT, branch: BRANCH, built_at: BUILT_AT } });
+});
 app.listen(process.env.PORT || 3000, () => console.log('[api] Listening on :' + (process.env.PORT || 3000)));
