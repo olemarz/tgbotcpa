@@ -1,63 +1,40 @@
-import { Router } from 'express';
+import express from 'express';
+import crypto from 'crypto';
+import { db } from '../db/index.js';
 
-import { query } from '../db/index.js';
-import { verifyInitData } from '../utils/tgInitData.js';
+export const waRouter = express.Router();
 
-export const waRouter = Router();
-
-function toTrimmedString(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function respond(res, status, payload) {
-  res.status(status).json(payload);
+function verifyInitData(initData) {
+  const BOT_TOKEN = (process.env.BOT_TOKEN || '').trim();
+  if (!BOT_TOKEN || !initData) return { ok: false, error: 'NO_TOKEN_OR_INITDATA' };
+  const urlParams = new URLSearchParams(initData);
+  const hash = urlParams.get('hash'); urlParams.delete('hash');
+  const dataCheckString = Array.from(urlParams.entries())
+    .sort(([a],[b]) => a.localeCompare(b))
+    .map(([k,v]) => `${k}=${v}`).join('\n');
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+  const check = crypto.createHmac('sha256', secret).update(dataCheckString).digest('hex');
+  if (check !== hash) return { ok: false, error: 'BAD_SIGNATURE' };
+  const user = JSON.parse(urlParams.get('user') || '{}');
+  const start_param = urlParams.get('start_param') || '';
+  return { ok: true, user, start_param };
 }
 
 waRouter.post('/claim', async (req, res) => {
-  const body = req.body ?? {};
-  const token = toTrimmedString(body.token);
-  const initData = typeof body.initData === 'string' ? body.initData : '';
-
-  if (!token) {
-    respond(res, 400, { ok: false, error: 'TOKEN_REQUIRED' });
-    return;
-  }
-
-  if (!initData) {
-    respond(res, 400, { ok: false, error: 'INIT_DATA_REQUIRED' });
-    return;
-  }
-
-  const verification = verifyInitData(initData);
-  if (!verification.ok || !verification.user?.id) {
-    respond(res, 401, { ok: false, error: verification.error ?? 'INIT_DATA_INVALID' });
-    return;
-  }
-
-  const startParam = verification.start_param;
-  if (startParam && startParam !== token) {
-    respond(res, 400, { ok: false, error: 'TOKEN_MISMATCH' });
-    return;
-  }
-
-  const tgId = verification.user.id;
-
   try {
-    const result = await query(
-      'UPDATE clicks SET tg_id = $1, used_at = COALESCE(used_at, now()) WHERE start_token = $2',
-      [tgId, token],
+    const { token = '', initData = '' } = req.body || {};
+    const v = verifyInitData(initData);
+    if (!v.ok) return res.status(401).json({ ok: false, error: v.error });
+    const tgId = v.user?.id;
+    const effectiveToken = token || v.start_param || '';
+    if (!effectiveToken) return res.status(400).json({ ok: false, error: 'NO_TOKEN' });
+    const result = await db.result(
+      'UPDATE clicks SET tg_id=$1, used_at=COALESCE(used_at, now()) WHERE start_token=$2',
+      [tgId, effectiveToken]
     );
-
-    if (result.rowCount && result.rowCount > 0) {
-      respond(res, 200, { ok: true });
-      return;
-    }
-
-    respond(res, 404, { ok: false, error: 'TOKEN_NOT_FOUND' });
-  } catch (error) {
-    console.error('[wa.claim] update error', error);
-    respond(res, 500, { ok: false, error: 'INTERNAL_ERROR' });
+    if (result.rowCount > 0) return res.json({ ok: true });
+    return res.status(404).json({ ok: false, error: 'TOKEN_NOT_FOUND' });
+  } catch (e) {
+    console.error('wa/claim error', e); return res.status(500).json({ ok: false, error: 'SERVER_ERROR' });
   }
 });
-
-export default waRouter;
