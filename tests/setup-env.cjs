@@ -9,3 +9,4 @@ process.env.DEBUG_TOKEN = process.env.DEBUG_TOKEN || 'debug-token';
 process.env.BOT_USERNAME = process.env.BOT_USERNAME || 'trackingusers_bot';
 process.env.POSTBACK_TIMEOUT_MS = process.env.POSTBACK_TIMEOUT_MS || '4000';
 process.env.IDEMPOTENCY_TTL_SEC = process.env.IDEMPOTENCY_TTL_SEC || '600';
+process.env.ALLOW_TEST_NO_SUB = process.env.ALLOW_TEST_NO_SUB || 'false';
