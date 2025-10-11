@@ -9,6 +9,7 @@ import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { config } from '../config.js';
 import { handleAdsUserCommand, handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
+import { createLinkCaptureMiddleware, handleTargetLinkCapture } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
 
 // ---- Инициализация бота ----
@@ -243,20 +244,8 @@ bot.action(/^stat:(.+)$/i, async (ctx) => {
   await respondWithStats(ctx, dateKey, { isCallback: true });
 });
 
-// эхо на любой текст (вне сцен)
-bot.on('text', async (ctx, next) => {
-  if (ctx.scene?.current) return next();
-  if (ctx.message?.text?.startsWith('/')) return next();
-  console.log('🗣 text', ctx.from?.id, '->', ctx.message?.text);
-  try {
-    if (!ctx.scene?.current) {
-      await ctx.reply('echo: ' + ctx.message.text);
-    }
-  } catch (e) {
-    console.error('❌ send error', e);
-  }
-  return next();
-});
+const linkCaptureMiddleware = createLinkCaptureMiddleware(handleTargetLinkCapture);
+bot.on('message', linkCaptureMiddleware);
 
 bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   logUpdate(ctx, 'chat_member');
