@@ -86,7 +86,21 @@ export async function handleClick(req, res) {
   const uidParam = req.query?.uid ?? req.query?.sub;
   const clickIdParam = req.query?.click_id ?? req.query?.clickId;
   const uid = uidParam !== undefined ? String(uidParam) : undefined;
-  const clickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
+  let clickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
+
+  if (!uid && !clickId) {
+    const allowManual = String(process.env.ALLOW_TEST_NO_SUB ?? 'false').toLowerCase() === 'true';
+    if (!allowManual) {
+      res.status(400).json({ ok: false, error: 'uid/sub or click_id is required' });
+      return;
+    }
+    const manualClickId = `manual-${Date.now()}`;
+    console.warn('manual click without sub', {
+      offer_id: offerId,
+      click_id: manualClickId,
+    });
+    clickId = manualClickId;
+  }
 
   const ipRaw = requestIp.getClientIp(req);
   const ip = normalizeIp(ipRaw);
