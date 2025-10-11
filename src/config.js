@@ -115,6 +115,8 @@ export function buildConfig(env = process.env) {
     return parseIdSet(raw);
   })();
 
+  const linkCaptureDisabled = (trim(env.DISABLE_LINK_CAPTURE) || '').toLowerCase() === 'true';
+
   return {
     botToken,
     baseUrl,
@@ -133,6 +135,7 @@ export function buildConfig(env = process.env) {
     webhookPath,
     MIN_RATES: DEFAULT_MIN_RATES,
     adsMasters,
+    linkCaptureDisabled,
   };
 }
 
