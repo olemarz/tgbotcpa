@@ -6,7 +6,7 @@ import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
 import { config } from '../config.js';
 import { query, insertOfferAuditLog } from '../db/index.js';
 import { uuid } from '../util/id.js';
-import { normalizeToISO2 } from '../util/geo.js';
+import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
 
 const logPrefix = '[adsWizard]';
@@ -225,8 +225,8 @@ async function promptCapsTotal(ctx) {
 async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Укажите страны (ISO-коды или названия через запятую) ` +
-      'или напишите «Любая».\nКоманды: [Назад], [Отмена].'
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите список стран или зон через запятую. ` +
+      'Примеры: СНГ, США, Россия, Казахстан, EU.\nКоманды: [Назад], [Отмена].'
   );
 }
 
@@ -456,11 +456,8 @@ function buildSummary(offer) {
     `Кап: ${formatCapsTotal(offer.caps_total)}`,
   ];
 
-  if (offer.geo_mode === 'any') {
-    lines.push('Гео: любая аудитория');
-  } else if (offer.geo_mode === 'whitelist') {
-    const preview = offer.geo_preview || normalizeToISO2(offer.geo_input || '').join(', ');
-    lines.push(`Гео: ${preview || '—'}`);
+  if (Array.isArray(offer.geo_whitelist) && offer.geo_whitelist.length > 0) {
+    lines.push(`Гео: ${offer.geo_whitelist.join(', ')}`);
   }
 
   lines.push(`Slug: <code>${offer.slug}</code>`);
@@ -510,7 +507,6 @@ async function insertOffer(offer, audit) {
     'base_rate',
     'premium_rate',
     'caps_total',
-    'status',
   ];
   const values = [
     offerId,
@@ -521,29 +517,32 @@ async function insertOffer(offer, audit) {
     Math.round(offer.base_rate),
     Math.round(offer.premium_rate),
     offer.caps_total,
-    'active',
   ];
 
   const columnsSet = await getOffersColumns();
+  if (columnsSet.has('status')) {
+    columns.push('status');
+    values.push('active');
+  }
   if (columnsSet.has('tracking_url')) {
     columns.push('tracking_url');
     values.push(trackingUrl);
-  }
-  if (columnsSet.has('caps_window')) {
-    columns.push('caps_window');
-    values.push(offer.caps_window);
-  }
-  if (columnsSet.has('time_targeting')) {
-    columns.push('time_targeting');
-    values.push(offer.time_targeting || null);
   }
   if (columnsSet.has('geo_mode')) {
     columns.push('geo_mode');
     values.push(offer.geo_mode || null);
   }
+  if (columnsSet.has('geo_list')) {
+    columns.push('geo_list');
+    values.push(Array.isArray(offer.geo_list) ? offer.geo_list : []);
+  }
   if (columnsSet.has('geo_input')) {
     columns.push('geo_input');
     values.push(offer.geo_input ?? null);
+  }
+  if (columnsSet.has('geo_whitelist')) {
+    columns.push('geo_whitelist');
+    values.push(Array.isArray(offer.geo_whitelist) ? offer.geo_whitelist : []);
   }
   if (columnsSet.has('chat_ref')) {
     columns.push('chat_ref');
@@ -741,36 +740,23 @@ const adsWizard = new Scenes.WizardScene(
 
     const text = getMessageText(ctx);
     if (!text) {
-      await ctx.reply('Укажите страны через запятую или напишите «Любая».');
+      await ctx.reply('Введите список стран или зон через запятую.');
       return;
     }
 
-    const normalizedText = text.trim();
-    if (!normalizedText) {
-      await ctx.reply('Укажите страны через запятую или напишите «Любая».');
+    let codes;
+    try {
+      codes = parseGeoInput(text);
+    } catch (error) {
+      await ctx.reply(error?.message || 'Не удалось распознать гео. Попробуйте ещё раз.');
       return;
     }
 
-    const lower = normalizedText.toLowerCase();
-    if (['любая', 'любая аудитория', 'any', 'all'].includes(lower)) {
-      ctx.wizard.state.offer.geo_mode = 'any';
-      ctx.wizard.state.offer.geo_input = '';
-      ctx.wizard.state.offer.geo_preview = 'любая аудитория';
-      await ctx.reply('Гео: любая аудитория');
-    } else {
-      const codes = normalizeToISO2(text);
-      if (!codes.length) {
-        await ctx.reply(
-          'Не удалось распознать страны. Укажите ISO-коды (например, RU, KZ) или названия через запятую.'
-        );
-        return;
-      }
-      const preview = codes.join(', ');
-      ctx.wizard.state.offer.geo_mode = 'whitelist';
-      ctx.wizard.state.offer.geo_input = text;
-      ctx.wizard.state.offer.geo_preview = preview;
-      await ctx.reply(`Гео: ${preview}`);
-    }
+    ctx.wizard.state.offer.geo_mode = 'whitelist';
+    ctx.wizard.state.offer.geo_input = text.trim();
+    ctx.wizard.state.offer.geo_list = codes;
+    ctx.wizard.state.offer.geo_whitelist = codes;
+    await ctx.reply(`Гео: ${codes.join(', ')}`);
 
     await promptForStep(ctx, Step.OFFER_NAME);
     return ctx.wizard.next();

@@ -109,7 +109,7 @@ describe('/ads command guard', () => {
 
     assert.ok(replies.length >= 1);
     const [text] = replies[0];
-    assert.equal(text, 'Пока нет подходящих офферов. Попробуйте позже.');
+    assert.equal(text, 'На сейчас задач нет');
   });
 });
 

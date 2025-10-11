@@ -1,0 +1,2 @@
+ALTER TABLE offers
+  ADD COLUMN IF NOT EXISTS geo_whitelist TEXT[] NOT NULL DEFAULT '{}';

@@ -1,3 +1,72 @@
+const CIS_CODES = ['RU', 'BY', 'UA', 'KZ', 'KG', 'AM', 'AZ', 'MD', 'TM', 'TJ', 'UZ'];
+const EU_CODES = [
+  'AT',
+  'BE',
+  'BG',
+  'HR',
+  'CY',
+  'CZ',
+  'DK',
+  'EE',
+  'FI',
+  'FR',
+  'DE',
+  'GR',
+  'HU',
+  'IE',
+  'IT',
+  'LV',
+  'LT',
+  'LU',
+  'MT',
+  'NL',
+  'PL',
+  'PT',
+  'RO',
+  'SK',
+  'SI',
+  'ES',
+  'SE',
+  'GB',
+  'CH',
+  'NO',
+];
+
+const COUNTRY_ALIASES = new Map(
+  Object.entries({
+    RU: ['ru', 'russia', 'россия', 'рф'],
+    KZ: ['kz', 'kazakhstan', 'казахстан'],
+    US: ['us', 'usa', 'united states', 'соединенные штаты', 'сша', 'штаты'],
+    UA: ['ua', 'ukraine', 'украина'],
+    BY: ['by', 'belarus', 'беларусь', 'белоруссия'],
+    KG: ['kg', 'kyrgyzstan', 'кыргызстан', 'киргизия'],
+    AM: ['am', 'armenia', 'армения'],
+    AZ: ['az', 'azerbaijan', 'азербайджан'],
+    MD: ['md', 'moldova', 'молдова'],
+    TM: ['tm', 'turkmenistan', 'туркменистан', 'туркмения'],
+    TJ: ['tj', 'tajikistan', 'таджикистан'],
+    UZ: ['uz', 'uzbekistan', 'узбекистан'],
+    DE: ['de', 'germany', 'германия'],
+    FR: ['fr', 'france', 'франция'],
+  })
+    .flatMap(([code, aliases]) => aliases.map((alias) => [alias, code]))
+);
+
+const ZONE_ALIASES = new Map(
+  Object.entries({
+    CIS: ['cis', 'sng', 'снг', 'содружество независимых государств'],
+    EU: ['eu', 'europe', 'europa', 'европа', 'евросоюз'],
+    US: ['usa', 'us', 'штаты', 'сша', 'united states'],
+  })
+    .flatMap(([zone, aliases]) => aliases.map((alias) => [alias, zone]))
+);
+
+const ZONE_MAP = {
+  CIS: CIS_CODES,
+  EU: EU_CODES,
+  US: ['US'],
+};
+
 function normalizeCountry(country) {
   if (!country) {
     return null;
@@ -93,4 +162,82 @@ export function checkGeoAccess(country, mode, list, context) {
       list,
     },
   };
+}
+
+function normalizeToken(token) {
+  return token
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function mapAliasToCodes(token) {
+  const normalized = normalizeToken(token);
+  if (!normalized) {
+    return null;
+  }
+
+  if (ZONE_ALIASES.has(normalized)) {
+    const zone = ZONE_ALIASES.get(normalized);
+    return ZONE_MAP[zone];
+  }
+
+  if (COUNTRY_ALIASES.has(normalized)) {
+    return [COUNTRY_ALIASES.get(normalized)];
+  }
+
+  return null;
+}
+
+export function parseGeoInput(input) {
+  if (typeof input !== 'string') {
+    throw new Error('Введите список стран или зон через запятую.');
+  }
+
+  const parts = input
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (!parts.length) {
+    throw new Error('Введите список стран или зон через запятую.');
+  }
+
+  const result = [];
+  const seen = new Set();
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    const upper = trimmed.toUpperCase();
+    let codes = null;
+
+    if (ZONE_MAP[upper]) {
+      codes = ZONE_MAP[upper];
+    } else if (/^[A-Z]{2}$/.test(upper)) {
+      codes = [upper];
+    } else {
+      codes = mapAliasToCodes(trimmed);
+    }
+
+    if (!codes || !codes.length) {
+      throw new Error(`Не удалось распознать гео: ${part}`);
+    }
+
+    for (const code of codes) {
+      if (!seen.has(code)) {
+        seen.add(code);
+        result.push(code);
+      }
+    }
+  }
+
+  if (!result.length) {
+    throw new Error('Введите хотя бы одну страну или зону.');
+  }
+
+  return result;
 }
