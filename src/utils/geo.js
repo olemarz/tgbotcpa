@@ -1,11 +1,4 @@
-import type { Request } from 'express';
-
-type GeoMode = string | null | undefined;
-type GeoList = readonly string[] | string | null | undefined;
-
-type CountryCode = string | null | undefined;
-
-function normalizeCountry(country: CountryCode): string | null {
+function normalizeCountry(country) {
   if (!country) {
     return null;
   }
@@ -16,7 +9,7 @@ function normalizeCountry(country: CountryCode): string | null {
   return trimmed.toUpperCase();
 }
 
-function normalizeGeoList(list: GeoList): string[] {
+function normalizeGeoList(list) {
   if (!list) {
     return [];
   }
@@ -52,14 +45,14 @@ function normalizeGeoList(list: GeoList): string[] {
   return [];
 }
 
-function normalizeGeoMode(mode: GeoMode): string {
+function normalizeGeoMode(mode) {
   if (!mode) {
     return 'any';
   }
   return String(mode).trim().toLowerCase();
 }
 
-export function isAllowedByGeo(country: CountryCode, mode: GeoMode, list: GeoList): boolean {
+export function isAllowedByGeo(country, mode, list) {
   const normalizedCountry = normalizeCountry(country);
   const normalizedList = normalizeGeoList(list);
   const normalizedMode = normalizeGeoMode(mode);
@@ -89,21 +82,7 @@ export function isAllowedByGeo(country: CountryCode, mode: GeoMode, list: GeoLis
   return true;
 }
 
-export type GeoCheckContext = {
-  offerId: string;
-  country: string | null;
-  mode: GeoMode;
-  list: GeoList;
-  ip: string | null;
-  req?: Request;
-};
-
-export type GeoCheckResult = {
-  allowed: boolean;
-  context: GeoCheckContext;
-};
-
-export function checkGeoAccess(country: CountryCode, mode: GeoMode, list: GeoList, context: GeoCheckContext): GeoCheckResult {
+export function checkGeoAccess(country, mode, list, context) {
   const allowed = isAllowedByGeo(country, mode, list);
   return {
     allowed,
