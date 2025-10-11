@@ -40,6 +40,12 @@ NODE_ENV=dev npm run bot
 # вывод: Bot launched (long polling)
 ```
 
+### QA-ярлыки для проверки старта
+- `/claim <TOKEN>` — вручную отрабатывает старт-токен, если Telegram не передал payload в `/start`.
+- `/go <offer_id> [uid]` — создаёт синтетический `click`, генерирует base64url-токен (≤64 символов) и сразу вызывает старт-обработчик.
+
+Оба сценария логируются через `logUpdate()` с указанием `startPayload` и типа апдейта.
+
 ## Smoke-тесты
 После запуска API:
 ```bash
