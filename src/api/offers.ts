@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { query } from '../db/index.js';
 import { normalizeToISO2 } from '../util/geo.js';
+import { normalizeTargetLink } from '../utils/tgLinks.js';
 
 const GEO_MODES = new Set(['any', 'whitelist', 'blacklist']);
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -118,6 +119,21 @@ function parseOptionalJson(value: unknown, field: string) {
   throw new HttpError(400, `${field} must be an object`);
 }
 
+function formatTargetUrl(link: ReturnType<typeof normalizeTargetLink>): string {
+  if (!link) {
+    throw new HttpError(
+      400,
+      'target_url must be a valid t.me link (examples: https://t.me/example_channel, https://t.me/+AbCd1234)',
+    );
+  }
+
+  if (link.type === 'public') {
+    return `https://t.me/${link.username}`;
+  }
+
+  return `https://t.me/+${link.invite}`;
+}
+
 function ensureGeoMode(value: unknown, { allowDefault }: { allowDefault: boolean }) {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
@@ -193,7 +209,7 @@ function buildCreateInsert(body: Record<string, unknown>, geo: GeoParseResult) {
   const columns: string[] = [];
   const values: unknown[] = [];
 
-  const targetUrl = parseRequiredString(body.target_url, 'target_url');
+  const targetUrl = formatTargetUrl(normalizeTargetLink(parseRequiredString(body.target_url, 'target_url')));
   columns.push('target_url');
   values.push(targetUrl);
 
@@ -253,7 +269,11 @@ function buildPatchUpdate(body: Record<string, unknown>, geo: GeoPatchResult) {
   const targetUrl = parseOptionalString(body.target_url, 'target_url');
   if (targetUrl !== undefined) {
     sets.push(`target_url = $${values.length + 1}`);
-    values.push(targetUrl);
+    if (targetUrl === null) {
+      values.push(null);
+    } else {
+      values.push(formatTargetUrl(normalizeTargetLink(targetUrl)));
+    }
   }
 
   const eventType = parseOptionalString(body.event_type, 'event_type');
