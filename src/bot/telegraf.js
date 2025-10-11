@@ -168,6 +168,12 @@ bot.command('whoami', async (ctx) => {
   }
 });
 
+bot.command('help', async (ctx) => {
+  await ctx.reply(
+    'Все офферы открываются через кнопку (WebApp). Если ничего не произошло — отправьте /claim <токен> из вашей ссылки.',
+  );
+});
+
 bot.command('ads', (ctx) => ctx.scene.enter('ads-wizard'));
 
 // эхо на любой текст (вне сцен)
