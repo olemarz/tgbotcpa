@@ -9,7 +9,7 @@ import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { config } from '../config.js';
 import { handleAdsUserCommand, handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
-import { createLinkCaptureMiddleware, handleTargetLinkCapture } from './link-capture.js';
+import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
 
 // ---- Инициализация бота ----
@@ -244,8 +244,8 @@ bot.action(/^stat:(.+)$/i, async (ctx) => {
   await respondWithStats(ctx, dateKey, { isCallback: true });
 });
 
-const linkCaptureMiddleware = createLinkCaptureMiddleware(handleTargetLinkCapture);
-bot.on('message', linkCaptureMiddleware);
+// общий ловец ссылок (после команд)
+bot.use(createLinkCaptureMiddleware());
 
 bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   logUpdate(ctx, 'chat_member');

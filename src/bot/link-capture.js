@@ -7,14 +7,23 @@ function getMessageText(message) {
   return '';
 }
 
-function findUrlEntity(message) {
-  if (!message) return null;
-  const entities = Array.isArray(message.entities)
-    ? message.entities
-    : Array.isArray(message.caption_entities)
-      ? message.caption_entities
-      : [];
-  return entities.find((entity) => entity?.type === 'url') || null;
+function getMessageEntities(message) {
+  if (!message) return [];
+  if (Array.isArray(message.entities)) {
+    return message.entities;
+  }
+  if (Array.isArray(message.caption_entities)) {
+    return message.caption_entities;
+  }
+  return [];
+}
+
+function findLinkEntity(message) {
+  const entities = getMessageEntities(message);
+  return (
+    entities.find((entity) => entity?.type === 'url' || entity?.type === 'text_link') ||
+    null
+  );
 }
 
 function sliceEntityText(text, entity) {
@@ -25,10 +34,16 @@ function sliceEntityText(text, entity) {
 }
 
 export function extractUrlFromMessage(message) {
+  const entity = findLinkEntity(message);
+  if (!entity) return null;
+
+  if (entity.type === 'text_link' && typeof entity.url === 'string') {
+    const value = entity.url.trim();
+    return value || null;
+  }
+
   const text = getMessageText(message);
   if (!text) return null;
-  const entity = findUrlEntity(message);
-  if (!entity) return null;
   const value = sliceEntityText(text, entity).trim();
   return value || null;
 }
@@ -56,18 +71,20 @@ export function normalizeTelegramLink(rawUrl) {
   parsed.protocol = 'https:';
   parsed.hash = '';
   const normalizedPath = parsed.pathname.replace(/\/{2,}/g, '/');
-  parsed.pathname = normalizedPath.endsWith('/') && normalizedPath !== '/' ? normalizedPath.slice(0, -1) : normalizedPath;
+  parsed.pathname =
+    normalizedPath.endsWith('/') && normalizedPath !== '/' ? normalizedPath.slice(0, -1) : normalizedPath;
 
   return `${parsed.protocol}//${parsed.hostname}${parsed.pathname}${parsed.search}`;
 }
 
-export function createLinkCaptureMiddleware(handler) {
-  if (typeof handler !== 'function') {
-    throw new TypeError('handler must be a function');
-  }
-
+export function createLinkCaptureMiddleware() {
   return async function linkCaptureMiddleware(ctx, next) {
-    if (!ctx?.message) {
+    if (process.env.DISABLE_LINK_CAPTURE === 'true') {
+      return next();
+    }
+
+    const message = ctx?.update?.message ?? ctx?.message;
+    if (!message) {
       return next();
     }
 
@@ -75,12 +92,13 @@ export function createLinkCaptureMiddleware(handler) {
       return next();
     }
 
-    const text = getMessageText(ctx.message);
+    const text = getMessageText(message);
     if (typeof text === 'string' && text.trimStart().startsWith('/')) {
       return next();
     }
 
-    const hasUrlEntity = Boolean(findUrlEntity(ctx.message));
+    const entities = getMessageEntities(message);
+    const hasUrlEntity = entities.some((entity) => entity?.type === 'url' || entity?.type === 'text_link');
     if (!hasUrlEntity) {
       return next();
     }
@@ -91,31 +109,27 @@ export function createLinkCaptureMiddleware(handler) {
       return next();
     }
 
-    return handler(ctx, next);
-  };
-}
-
-export async function handleTargetLinkCapture(ctx, next) {
-  const rawUrl = extractUrlFromMessage(ctx.message);
-  if (!rawUrl) {
-    return next();
-  }
-
-  const normalized = normalizeTelegramLink(rawUrl);
-  if (!normalized) {
-    if (typeof ctx.reply === 'function') {
-      await ctx.reply('Нужно прислать ссылку вида https://t.me/...');
+    const rawUrl = extractUrlFromMessage(message);
+    if (!rawUrl) {
+      return next();
     }
+
+    const normalized = normalizeTelegramLink(rawUrl);
+    if (!normalized) {
+      if (typeof ctx.reply === 'function') {
+        await ctx.reply('Нужно прислать ссылку вида https://t.me/...');
+      }
+      return next();
+    }
+
+    if (!ctx.session) {
+      ctx.session = {};
+    }
+
+    ctx.session.target_link = normalized;
+    ctx.session.raw_target_link = rawUrl;
+
     return next();
-  }
-
-  if (!ctx.session) {
-    ctx.session = {};
-  }
-
-  ctx.session.target_link = normalized;
-  ctx.session.raw_target_link = rawUrl;
-
-  return next();
+  };
 }
 
