@@ -22,7 +22,7 @@ export const MIN_RATES = {
   stars:   { regular: 30, premium: 30 },
 };
 
-// Тайм-таргетинг пресеты (кладём в caps_window)
+// Тайм-таргетинг пресеты (устаревшие)
 export const TIME_PRESETS = {
   '247':      { mode: '247' },                                  // 24/7
   'weekdays': { mode: 'weekdays', days: ['Mon','Tue','Wed','Thu','Fri'] },
