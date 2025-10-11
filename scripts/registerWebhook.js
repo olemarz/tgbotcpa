@@ -24,9 +24,9 @@ async function main() {
       allowed_updates: JSON.stringify(allowed),
     }),
   );
-  console.log('setWebhook ->', data);
+  console.log(data);
 }
 main().catch((e) => {
-  console.error('registerWebhook error:', e.response?.data || e.message);
+  console.error(e.response?.data || e.message);
   process.exit(1);
 });

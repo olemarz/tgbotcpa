@@ -1,8 +1,7 @@
 // src/bot/telegraf.js
-import TelegrafPkg, { Telegraf, Scenes, session, Markup } from 'telegraf';
+import TelegrafPkg, { Telegraf, Scenes, session } from 'telegraf';
 import adsWizard from './adsWizard.js';
 import { query } from '../db/index.js';
-import { uuid } from '../util/id.js';
 import { sendPostback } from '../services/postback.js';
 
 // ---- Инициализация бота ----
@@ -13,16 +12,18 @@ if (!token) {
 
 export const bot = new Telegraf(token);
 
-// лёгкий лог апдейтов (debug)
-bot.use(async (ctx, next) => {
-  console.log('➡️ update', ctx.updateType, {
-    text: ctx.message?.text,
-    data: ctx.callbackQuery?.data,
-    from: ctx.from?.id,
-    chat: ctx.chat?.id
+export function logUpdate(ctx, tag = 'update') {
+  const u = ctx.update || {};
+  const from = ctx.from ? { id: ctx.from.id, is_bot: ctx.from.is_bot } : null;
+  const text = ctx.message?.text;
+  const startPayload = ctx.startPayload;
+  console.log(`[tg] ${tag}`, {
+    types: Object.keys(u),
+    from,
+    text,
+    startPayload,
   });
-  return next();
-});
+}
 
 // session — строго ДО stage
 bot.use(session());
@@ -34,97 +35,72 @@ bot.use(stage.middleware());
 // ---- Команды ----
 
 const JOIN_GROUP_EVENT = 'join_group';
-const CHAT_MEMBER_TYPES = new Set(['group', 'supergroup', 'channel']);
-const JOIN_STATUSES = new Set(['member', 'administrator', 'creator']);
-const ATTRIBUTION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
-async function sendDefaultStartReply(ctx) {
-  await ctx.reply(
-    '👋 Привет! Бот на вебхуке готов. Напиши /whoami или /ads',
-    Markup.inlineKeyboard([
-      [
-        Markup.button.url(
-          'Документация',
-          'https://github.com/olemarz/tgbotcpa/blob/main/docs/SUMMARY.md'
-        )
-      ]
-    ])
-  );
-}
-
-export async function handleStart(ctx) {
-  const startToken = ctx.startPayload?.trim();
+export async function handleStartWithToken(ctx, token) {
   const tgId = ctx.from?.id;
-
-  if (!startToken || !tgId) {
-    await sendDefaultStartReply(ctx);
+  if (!tgId) {
+    console.warn('[tg] missing from.id on start token', { token });
+    await ctx.reply('Не удалось определить Telegram ID. Попробуйте ещё раз позже.');
     return;
   }
 
-  try {
-    const { rows } = await query(
-      `SELECT c.id, c.offer_id, c.uid, o.target_url, o.event_type
-       FROM clicks c
-       JOIN offers o ON o.id = c.offer_id
-       WHERE c.start_token = $1
-       ORDER BY c.created_at DESC
-       LIMIT 1`,
-      [startToken]
-    );
+  const r = await query(
+    `
+    SELECT c.id AS click_id, c.offer_id, c.uid, o.target_url, o.event_type
+    FROM clicks c JOIN offers o ON o.id=c.offer_id
+    WHERE c.start_token=$1
+    LIMIT 1
+  `,
+    [token],
+  );
 
-    if (!rows.length) {
-      await ctx.reply('Ссылка устарела');
-      console.warn('start token not found', { start_token: startToken, tg_id: tgId });
-      return;
-    }
-
-    const click = rows[0];
-
-    const updateResult = await query(
-      `UPDATE clicks
-         SET tg_id = $1,
-             used_at = now()
-       WHERE id = $2 AND (tg_id IS NULL OR tg_id = $1)
-       RETURNING id`,
-      [tgId, click.id]
-    );
-
-    if (!updateResult.rowCount) {
-      await ctx.reply('Ссылка уже использована другим пользователем.');
-      console.warn('start token already claimed', { start_token: startToken, tg_id: tgId });
-      return;
-    }
-
-    const attributionId = uuid();
-
-    await query(
-      `INSERT INTO attribution (id, click_id, offer_id, uid, tg_id, state)
-       VALUES ($1, $2, $3, $4, $5, 'started')`,
-      [attributionId, click.id, click.offer_id, click.uid ?? null, tgId]
-    );
-
-    console.log('attribution started', {
-      tg_id: tgId,
-      offer_id: click.offer_id,
-      click_id: click.id,
-      start_token: startToken,
-    });
-
-    if (click.event_type === JOIN_GROUP_EVENT && click.target_url) {
-      await ctx.reply(
-        'Нажмите, чтобы вступить в группу. После вступления мы автоматически зафиксируем событие.',
-        Markup.inlineKeyboard([[Markup.button.url('✅ Вступить в группу', click.target_url)]])
-      );
-      return;
-    }
-  } catch (error) {
-    console.error('start handler attribution error', { error, start_token: startToken, tg_id: tgId });
+  if (!r.rowCount) {
+    await ctx.reply('⛔️ Ссылка устарела или неверна. Сгенерируйте новую через /ads.');
+    return;
   }
 
-  await sendDefaultStartReply(ctx);
+  const { click_id, offer_id, uid, target_url, event_type } = r.rows[0];
+
+  const update = await query(
+    `UPDATE clicks SET tg_id=$1, used_at=NOW() WHERE id=$2 AND (tg_id IS NULL OR tg_id=$1)`,
+    [tgId, click_id],
+  );
+  if (!update.rowCount) {
+    console.warn('[tg] start token already used', { token, tgId });
+    await ctx.reply('⛔️ Ссылка уже использована другим пользователем.');
+    return;
+  }
+  await query(
+    `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1,$2,$3,$4,'started')`,
+    [click_id, offer_id, uid ?? null, tgId],
+  );
+
+  if (event_type === JOIN_GROUP_EVENT && target_url) {
+    await ctx.reply('Нажмите, чтобы вступить в группу. После вступления зафиксируем событие:', {
+      reply_markup: { inline_keyboard: [[{ text: '✅ Вступить в группу', url: target_url }]] },
+    });
+  } else {
+    await ctx.reply('Готово! Продолжайте в боте.');
+  }
 }
 
-bot.start(handleStart);
+bot.start(async (ctx) => {
+  logUpdate(ctx, 'start');
+  const token = ctx.startPayload?.trim();
+  if (!token) {
+    return ctx.reply(
+      'Это /start без параметра кампании. Перейдите по ссылке /click из оффера или пришлите токен командой: /claim <TOKEN>',
+    );
+  }
+  return handleStartWithToken(ctx, token);
+});
+
+// ручной фолбэк для QA: /claim TOKEN
+bot.hears(/^\/claim\s+(\S+)/i, async (ctx) => {
+  logUpdate(ctx, 'claim');
+  const token = ctx.match[1];
+  return handleStartWithToken(ctx, token);
+});
 
 bot.command('whoami', async (ctx) => {
   try {
@@ -142,7 +118,6 @@ bot.on('text', async (ctx, next) => {
   if (ctx.message?.text?.startsWith('/')) return next();
   console.log('🗣 text', ctx.from?.id, '->', ctx.message?.text);
   try {
-    // не отвечаем «echo:/ads», если пользователь в сцене
     if (!ctx.scene?.current) {
       await ctx.reply('echo: ' + ctx.message.text);
     }
@@ -152,76 +127,38 @@ bot.on('text', async (ctx, next) => {
   return next();
 });
 
-async function handleChatMember(ctx, next) {
-  const update = ctx.update?.chat_member ?? ctx.update?.my_chat_member;
-  const chatType = update?.chat?.type ?? ctx.chat?.type;
-  const newMember = update?.new_chat_member;
-  const tgId = newMember?.user?.id;
-  const status = newMember?.status;
+bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
+  logUpdate(ctx, 'chat_member');
+  const upd = ctx.update.chat_member || ctx.update.my_chat_member;
+  const user = upd?.new_chat_member?.user;
+  const status = upd?.new_chat_member?.status;
+  if (!user) return;
+  if (!['member', 'administrator', 'creator'].includes(status)) return;
 
-  if (!update || !CHAT_MEMBER_TYPES.has(chatType) || !JOIN_STATUSES.has(status) || !tgId || newMember.user?.is_bot) {
-    return next();
-  }
+  const tgId = user.id;
+
+  const r = await query(
+    `
+    SELECT id, click_id, offer_id, uid
+    FROM attribution
+    WHERE tg_id=$1 AND state='started'
+      AND created_at >= NOW() - INTERVAL '24 hours'
+    ORDER BY created_at DESC LIMIT 1
+  `,
+    [tgId],
+  );
+  if (!r.rowCount) return;
+
+  const { id: attrId, click_id, offer_id, uid } = r.rows[0];
+  await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offer_id, tgId, JOIN_GROUP_EVENT]);
+  await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attrId]);
 
   try {
-    const { rows } = await query(
-      `SELECT a.id, a.offer_id, a.uid, a.click_id, a.created_at, o.event_type
-       FROM attribution a
-       JOIN offers o ON o.id = a.offer_id
-       WHERE a.tg_id = $1
-         AND a.state = 'started'
-         AND a.created_at >= now() - interval '24 hours'
-       ORDER BY a.created_at DESC
-       LIMIT 1`,
-      [tgId]
-    );
-
-    if (!rows.length) {
-      return next();
-    }
-
-    const attribution = rows[0];
-    if (attribution.event_type !== JOIN_GROUP_EVENT) {
-      return next();
-    }
-
-    const createdAt = new Date(attribution.created_at);
-    if (Number.isNaN(createdAt.getTime()) || Date.now() - createdAt.getTime() > ATTRIBUTION_LOOKBACK_MS) {
-      return next();
-    }
-
-    await query('INSERT INTO events (offer_id, tg_id, type) VALUES ($1, $2, $3)', [
-      attribution.offer_id,
-      tgId,
-      JOIN_GROUP_EVENT,
-    ]);
-
-    await query('UPDATE attribution SET state = $1 WHERE id = $2', ['converted', attribution.id]);
-
-    try {
-      await sendPostback({
-        offer_id: attribution.offer_id,
-        tg_id: tgId,
-        uid: attribution.uid,
-        click_id: attribution.click_id,
-        event: JOIN_GROUP_EVENT,
-      });
-    } catch (error) {
-      console.error('sendPostback error', {
-        error: error?.message,
-        offer_id: attribution.offer_id,
-        tg_id: tgId,
-      });
-    }
-  } catch (error) {
-    console.error('chat_member handler error', error);
+    await sendPostback({ offer_id, tg_id: tgId, uid, click_id, event: JOIN_GROUP_EVENT });
+  } catch (e) {
+    console.error('postback error:', e?.message || e);
   }
-
-  return next();
-}
-
-bot.on('chat_member', handleChatMember);
-bot.on('my_chat_member', handleChatMember);
+});
 
 // ---- Экспорт обработчика вебхука для Express (всегда 200) ----
 // Webhook callback, используется сервером

@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS attribution (
   created_at timestamptz DEFAULT now()
 );
 
+ALTER TABLE attribution ADD COLUMN IF NOT EXISTS tg_id bigint;
+ALTER TABLE attribution ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
+
 CREATE INDEX IF NOT EXISTS idx_attr_tg ON attribution(tg_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_attr_offer ON attribution(offer_id, created_at DESC);
 
@@ -58,6 +61,9 @@ CREATE TABLE IF NOT EXISTS events (
   type text NOT NULL,
   created_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE events ADD COLUMN IF NOT EXISTS tg_id bigint;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
 
 CREATE INDEX IF NOT EXISTS idx_events_tg ON events(tg_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_offer ON events(offer_id, created_at DESC);
@@ -73,6 +79,9 @@ CREATE TABLE IF NOT EXISTS postbacks (
   error text,
   created_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE postbacks ADD COLUMN IF NOT EXISTS tg_id bigint;
+ALTER TABLE postbacks ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
 
 CREATE INDEX IF NOT EXISTS idx_postbacks_tg ON postbacks(tg_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_postbacks_offer ON postbacks(offer_id, created_at DESC);
