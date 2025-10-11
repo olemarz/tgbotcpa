@@ -15,14 +15,11 @@ export const bot = new Telegraf(token);
 
 export function logUpdate(ctx, tag = 'update') {
   const u = ctx.update || {};
-  const from = ctx.from ? { id: ctx.from.id, is_bot: ctx.from.is_bot } : null;
-  const text = ctx.message?.text;
-  const startPayload = ctx.startPayload;
-  console.log(`[tg] ${tag}`, {
+  console.log('[tg]', tag, {
     types: Object.keys(u),
-    from,
-    text,
-    startPayload,
+    from: ctx.from ? { id: ctx.from.id, is_bot: ctx.from.is_bot } : null,
+    text: ctx.message?.text,
+    startPayload: ctx.startPayload,
   });
 }
 
@@ -96,7 +93,11 @@ export async function handleStartWithToken(ctx, rawToken) {
 
 bot.start(async (ctx) => {
   logUpdate(ctx, 'start');
-  const token = ctx.startPayload?.trim();
+  let token = ctx.startPayload?.trim();
+  if (!token && typeof ctx.message?.text === 'string') {
+    const m = ctx.message.text.match(/^\/start(?:@[\w_]+)?\s+(\S+)$/);
+    if (m) token = m[1];
+  }
   if (!token) {
     return ctx.reply(
       'Это /start без параметра кампании. Нажмите ссылку из оффера или пришлите токен командой:\n/claim <TOKEN>',
