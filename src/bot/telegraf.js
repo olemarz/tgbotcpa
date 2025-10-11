@@ -3,6 +3,7 @@ import TelegrafPkg, { Telegraf, Scenes, session } from 'telegraf';
 import adsWizard from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
+import { uuid, shortToken } from '../util/id.js';
 
 // ---- Инициализация бота ----
 const token = process.env.BOT_TOKEN;
@@ -36,11 +37,18 @@ bot.use(stage.middleware());
 
 const JOIN_GROUP_EVENT = 'join_group';
 
-export async function handleStartWithToken(ctx, token) {
+export async function handleStartWithToken(ctx, rawToken) {
   const tgId = ctx.from?.id;
+  const token = rawToken?.trim();
+
   if (!tgId) {
     console.warn('[tg] missing from.id on start token', { token });
     await ctx.reply('Не удалось определить Telegram ID. Попробуйте ещё раз позже.');
+    return;
+  }
+
+  if (!token || !/^[A-Za-z0-9_-]{1,64}$/.test(token)) {
+    await ctx.reply('⛔️ Неверный токен. Сгенерируйте новую ссылку или используйте /claim <TOKEN>.');
     return;
   }
 
@@ -70,6 +78,7 @@ export async function handleStartWithToken(ctx, token) {
     await ctx.reply('⛔️ Ссылка уже использована другим пользователем.');
     return;
   }
+
   await query(
     `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1,$2,$3,$4,'started')`,
     [click_id, offer_id, uid ?? null, tgId],
@@ -79,9 +88,10 @@ export async function handleStartWithToken(ctx, token) {
     await ctx.reply('Нажмите, чтобы вступить в группу. После вступления зафиксируем событие:', {
       reply_markup: { inline_keyboard: [[{ text: '✅ Вступить в группу', url: target_url }]] },
     });
-  } else {
-    await ctx.reply('Готово! Продолжайте в боте.');
+    return;
   }
+
+  await ctx.reply('Готово! Продолжайте в боте.');
 }
 
 bot.start(async (ctx) => {
@@ -89,7 +99,7 @@ bot.start(async (ctx) => {
   const token = ctx.startPayload?.trim();
   if (!token) {
     return ctx.reply(
-      'Это /start без параметра кампании. Перейдите по ссылке /click из оффера или пришлите токен командой: /claim <TOKEN>',
+      'Это /start без параметра кампании. Нажмите ссылку из оффера или пришлите токен командой:\n/claim <TOKEN>',
     );
   }
   return handleStartWithToken(ctx, token);
@@ -100,6 +110,53 @@ bot.hears(/^\/claim\s+(\S+)/i, async (ctx) => {
   logUpdate(ctx, 'claim');
   const token = ctx.match[1];
   return handleStartWithToken(ctx, token);
+});
+
+// QA shortcut: /go OFFER_ID [uid]
+bot.hears(/^\/go\s+([0-9a-f-]{36})(?:\s+(\S+))?$/i, async (ctx) => {
+  logUpdate(ctx, 'go');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await ctx.reply('Не удалось определить Telegram ID. Попробуйте ещё раз позже.');
+    return;
+  }
+
+  const offerId = ctx.match[1];
+  const uid = ctx.match[2] || 'qa';
+
+  const offer = await query(
+    `SELECT id, target_url, event_type FROM offers WHERE id=$1 LIMIT 1`,
+    [offerId],
+  );
+  if (!offer.rowCount) {
+    await ctx.reply('⛔️ Оффер не найден.');
+    return;
+  }
+
+  let token = shortToken().slice(0, 32);
+  for (let attempts = 0; attempts < 4; attempts += 1) {
+    const exists = await query(`SELECT 1 FROM clicks WHERE start_token=$1 LIMIT 1`, [token]);
+    if (!exists.rowCount) break;
+    token = shortToken().slice(0, 32);
+  }
+
+  const clickId = uuid();
+  try {
+    await query(
+      `INSERT INTO clicks (id, offer_id, uid, start_token, created_at, tg_id)
+       VALUES ($1,$2,$3,$4,NOW(),$5)`,
+      [clickId, offerId, uid, token, tgId],
+    );
+  } catch (err) {
+    if (err?.code === '23505') {
+      console.error('duplicate start_token on /go', { token, offerId, uid, tgId });
+      await ctx.reply('⚠️ Не удалось сгенерировать токен. Попробуйте ещё раз.');
+      return;
+    }
+    throw err;
+  }
+
+  await handleStartWithToken(ctx, token);
 });
 
 bot.command('whoami', async (ctx) => {
@@ -150,11 +207,25 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   if (!r.rowCount) return;
 
   const { id: attrId, click_id, offer_id, uid } = r.rows[0];
+  const existing = await query(
+    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
+    [offer_id, tgId, JOIN_GROUP_EVENT],
+  );
+  if (existing.rowCount) {
+    await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attrId]);
+    return;
+  }
+
   await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offer_id, tgId, JOIN_GROUP_EVENT]);
-  await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attrId]);
+  const updated = await query(
+    `UPDATE attribution SET state='converted' WHERE id=$1 RETURNING id`,
+    [attrId],
+  );
 
   try {
-    await sendPostback({ offer_id, tg_id: tgId, uid, click_id, event: JOIN_GROUP_EVENT });
+    if (updated.rowCount) {
+      await sendPostback({ offer_id, tg_id: tgId, uid, click_id, event: JOIN_GROUP_EVENT });
+    }
   } catch (e) {
     console.error('postback error:', e?.message || e);
   }
