@@ -1,10 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { webhookCallback } from '../bot/telegraf.js';
 import { parseGeoInput } from '../util/geo.js';
+import { waRouter } from './wa.js';
+import { handleClick } from './click.js';
+import { uuid } from '../util/id.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -17,11 +22,18 @@ const requireDebug = (req, res, next) => {
   return next();
 };
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.resolve(__dirname, '../../public');
+
 export function createApp() {
   const app = express();
 
   app.use(bodyParser.json());
   app.use(bodyParser.urlencoded({ extended: true }));
+  app.use(express.static(publicDir));
+
+  app.use('/api/wa', waRouter);
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
