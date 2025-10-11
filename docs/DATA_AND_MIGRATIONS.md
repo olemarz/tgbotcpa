@@ -8,7 +8,7 @@
 ## Схема базы данных
 | Таблица | Ключевые поля | Назначение |
 |---------|---------------|------------|
-| `offers` | `id UUID PK`, `target_url`, `event_type`, `base_rate`, `premium_rate`, `status` | Хранение офферов, созданных через `/ads`. Доп.поля: `caps_total`, `caps_window JSONB`, `reaction_whitelist JSONB`, `chat_ref JSONB`, `created_at`. |
+| `offers` | `id UUID PK`, `target_url`, `event_type`, `base_rate`, `premium_rate`, `status` | Хранение офферов, созданных через `/ads`. Доп.поля: `caps_total`, `geo_mode`, `geo_list`, `reaction_whitelist JSONB`, `chat_ref JSONB`, `created_at`. |
 | `clicks` | `id UUID PK`, `offer_id UUID`, `uid TEXT`, `subs JSONB` | Фиксация кликов из CPA ссылок. |
 | `start_tokens` | `token TEXT PK`, `offer_id UUID`, `uid TEXT`, `exp_at TIMESTAMPTZ` | Одноразовые токены для `/start` параметра в Telegram. |
 | `attribution` | PK по `(user_id BIGINT, offer_id UUID)`, `uid TEXT`, `is_premium BOOLEAN`, `first_seen`, `last_seen` | Соответствие Telegram пользователя клику и офферу. |

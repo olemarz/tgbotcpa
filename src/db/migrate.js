@@ -15,8 +15,6 @@ CREATE TABLE IF NOT EXISTS offers (
   updated_at timestamptz DEFAULT now()
 );
 
-ALTER TABLE offers ADD COLUMN IF NOT EXISTS caps_window interval;
-ALTER TABLE offers ADD COLUMN IF NOT EXISTS time_targeting jsonb;
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS chat_ref jsonb;
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_mode text DEFAULT 'any';
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_list text[];
