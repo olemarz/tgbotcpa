@@ -44,14 +44,8 @@ jobs:
           PM2_NAME: ${{ env.PM2_NAME }}
         run: |
           ssh -o StrictHostKeyChecking=yes -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" <<'REMOTE'
-          set -eo pipefail
+          set -euo pipefail
           cd "${APP_DIR:-/opt/tgbotcpa}"
-          git fetch origin
-          git reset --hard origin/main
-          if [ -f package-lock.json ]; then npm ci --omit=dev; else npm i --omit=dev; fi
-          # npx prisma migrate deploy || true   # закомментировано, оставить как подсказку
-          # npm run build || true               # при необходимости
-          pm2 reload "${PM2_NAME:-tg-api}" || pm2 start ecosystem.config.cjs --only "${PM2_NAME:-tg-api}"
-          pm2 save
+          bash scripts/deploy.sh
           REMOTE
         shell: bash
