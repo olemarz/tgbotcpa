@@ -76,7 +76,7 @@ function mapOfferRow(row) {
       : null;
 
   const payoutCents = [row.payout_cents, row.premium_rate, row.base_rate].find(
-    (value) => typeof value === 'number' && Number.isFinite(value)
+    (value) => typeof value === 'number' && Number.isFinite(value) && value > 0
   );
 
   const status = typeof row.status === 'string' && row.status.trim() ? row.status.trim() : 'active';
