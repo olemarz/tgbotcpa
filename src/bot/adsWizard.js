@@ -3,6 +3,7 @@ import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
 import { config } from '../config.js';
 import { query, insertOfferAuditLog } from '../db/index.js';
 import { uuid } from '../util/id.js';
+import { normalizeToISO2 } from '../util/geo.js';
 
 const logPrefix = '[adsWizard]';
 
@@ -37,9 +38,10 @@ const Step = {
   BASE_RATE: 3,
   PREMIUM_RATE: 4,
   CAPS_TOTAL: 5,
-  OFFER_NAME: 6,
-  OFFER_SLUG: 7,
-  CONFIRM: 8,
+  GEO_TARGETING: 6,
+  OFFER_NAME: 7,
+  OFFER_SLUG: 8,
+  CONFIRM: 9,
 };
 
 const STEP_NUMBERS = {
@@ -48,8 +50,9 @@ const STEP_NUMBERS = {
   [Step.BASE_RATE]: 3,
   [Step.PREMIUM_RATE]: 4,
   [Step.CAPS_TOTAL]: 5,
-  [Step.OFFER_NAME]: 6,
-  [Step.OFFER_SLUG]: 7,
+  [Step.GEO_TARGETING]: 6,
+  [Step.OFFER_NAME]: 7,
+  [Step.OFFER_SLUG]: 8,
 };
 
 const TOTAL_INPUT_STEPS = Math.max(...Object.values(STEP_NUMBERS));
@@ -197,6 +200,14 @@ async function promptCapsTotal(ctx) {
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число от 10 и выше).\n` +
       'Команды: [Назад], [Отмена].'
+  );
+}
+
+async function promptGeoTargeting(ctx) {
+  const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
+  await ctx.reply(
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Укажите страны (ISO-коды или названия через запятую) ` +
+      'или напишите «Любая».\nКоманды: [Назад], [Отмена].'
   );
 }
 
@@ -424,8 +435,16 @@ function buildSummary(offer) {
     `Базовая ставка: ${formatRate(offer.base_rate)}`,
     `Премиум ставка: ${formatRate(offer.premium_rate)}`,
     `Кап: ${formatCapsTotal(offer.caps_total)}`,
-    `Slug: <code>${offer.slug}</code>`,
   ];
+
+  if (offer.geo_mode === 'any') {
+    lines.push('Гео: любая аудитория');
+  } else if (offer.geo_mode === 'whitelist') {
+    const preview = offer.geo_preview || normalizeToISO2(offer.geo_input || '').join(', ');
+    lines.push(`Гео: ${preview || '—'}`);
+  }
+
+  lines.push(`Slug: <code>${offer.slug}</code>`);
   return lines.join('\n');
 }
 
@@ -445,6 +464,9 @@ async function promptForStep(ctx, step) {
       break;
     case Step.CAPS_TOTAL:
       await promptCapsTotal(ctx);
+      break;
+    case Step.GEO_TARGETING:
+      await promptGeoTargeting(ctx);
       break;
     case Step.OFFER_NAME:
       await promptOfferName(ctx);
@@ -490,6 +512,14 @@ async function insertOffer(offer, audit) {
   if (columnsSet.has('time_targeting')) {
     columns.push('time_targeting');
     values.push(offer.time_targeting || null);
+  }
+  if (columnsSet.has('geo_mode')) {
+    columns.push('geo_mode');
+    values.push(offer.geo_mode || null);
+  }
+  if (columnsSet.has('geo_input')) {
+    columns.push('geo_input');
+    values.push(offer.geo_input ?? null);
   }
   if (columnsSet.has('chat_ref')) {
     columns.push('chat_ref');
@@ -672,7 +702,7 @@ const adsWizard = new Scenes.WizardScene(
     }
 
     ctx.wizard.state.offer.caps_total = num;
-    await promptForStep(ctx, Step.OFFER_NAME);
+    await promptForStep(ctx, Step.GEO_TARGETING);
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -682,6 +712,52 @@ const adsWizard = new Scenes.WizardScene(
     if (isBack(ctx)) {
       ctx.wizard.selectStep(Step.CAPS_TOTAL);
       await promptForStep(ctx, Step.CAPS_TOTAL);
+      return;
+    }
+
+    const text = getMessageText(ctx);
+    if (!text) {
+      await ctx.reply('Укажите страны через запятую или напишите «Любая».');
+      return;
+    }
+
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      await ctx.reply('Укажите страны через запятую или напишите «Любая».');
+      return;
+    }
+
+    const lower = normalizedText.toLowerCase();
+    if (['любая', 'любая аудитория', 'any', 'all'].includes(lower)) {
+      ctx.wizard.state.offer.geo_mode = 'any';
+      ctx.wizard.state.offer.geo_input = '';
+      ctx.wizard.state.offer.geo_preview = 'любая аудитория';
+      await ctx.reply('Гео: любая аудитория');
+    } else {
+      const codes = normalizeToISO2(text);
+      if (!codes.length) {
+        await ctx.reply(
+          'Не удалось распознать страны. Укажите ISO-коды (например, RU, KZ) или названия через запятую.'
+        );
+        return;
+      }
+      const preview = codes.join(', ');
+      ctx.wizard.state.offer.geo_mode = 'whitelist';
+      ctx.wizard.state.offer.geo_input = text;
+      ctx.wizard.state.offer.geo_preview = preview;
+      await ctx.reply(`Гео: ${preview}`);
+    }
+
+    await promptForStep(ctx, Step.OFFER_NAME);
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    if (isCancel(ctx)) {
+      return cancelWizard(ctx);
+    }
+    if (isBack(ctx)) {
+      ctx.wizard.selectStep(Step.GEO_TARGETING);
+      await promptForStep(ctx, Step.GEO_TARGETING);
       return;
     }
 
