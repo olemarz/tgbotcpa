@@ -64,7 +64,7 @@ waRouter.post('/claim', async (req: Request, res: Response) => {
       return;
     }
 
-    respond(res, 200, { ok: false, error: 'TOKEN_NOT_FOUND' });
+    respond(res, 404, { ok: false, error: 'TOKEN_NOT_FOUND' });
   } catch (error) {
     console.error('[wa.claim] update error', error);
     respond(res, 500, { ok: false, error: 'INTERNAL_ERROR' });

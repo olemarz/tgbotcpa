@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
 import { waRouter } from './wa.js';
+import { cpaRouter } from './cpa.js';
 
 const app = express();
 app.use(express.json());
@@ -13,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../../public');
 app.use(express.static(publicDir));
 app.use('/api/wa', waRouter);
+app.use('/api/cpa', cpaRouter);
 
 const WH_PATH = process.env.WEBHOOK_PATH || '/bot/webhook';
 const WH_SECRET = process.env.WEBHOOK_SECRET || 'prod-secret';

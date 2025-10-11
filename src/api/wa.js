@@ -1,8 +1,9 @@
-import { Router } from 'express';
-
-import { query } from '../db/index.js';
+import express from 'express';
 import { bot } from '../bot/telegraf.js';
+import { query } from '../db/index.js';
 import { verifyInitData } from '../utils/tgInitData.js';
+
+export const waRouter = express.Router();
 
 function toTrimmedString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -12,12 +13,16 @@ function respond(res, status, payload) {
   res.status(status).json(payload);
 }
 
+function respond(res, status, payload) {
+  res.status(status).json(payload);
+}
+
 export const waRouter = Router();
 
 waRouter.post('/claim', async (req, res) => {
-  const body = (req.body ?? {});
+  const body = req.body ?? {};
   const token = toTrimmedString(body.token);
-  const initData = typeof body.initData === 'string' ? body.initData : '';
+  const initData = toTrimmedString(body.initData);
 
   if (!token) {
     respond(res, 400, { ok: false, error: 'TOKEN_REQUIRED' });

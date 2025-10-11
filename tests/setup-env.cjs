@@ -4,6 +4,7 @@ process.env.BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'pgmem://tests';
 process.env.CPA_POSTBACK_URL = process.env.CPA_POSTBACK_URL || '';
 process.env.CPA_PB_SECRET = process.env.CPA_PB_SECRET || 'test-secret';
+process.env.CPA_API_KEY = process.env.CPA_API_KEY || 'test-cpa-api-key';
 process.env.DEBUG_TOKEN = process.env.DEBUG_TOKEN || 'debug-token';
 process.env.BOT_USERNAME = process.env.BOT_USERNAME || 'trackingusers_bot';
 process.env.POSTBACK_TIMEOUT_MS = process.env.POSTBACK_TIMEOUT_MS || '4000';

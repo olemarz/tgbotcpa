@@ -2,13 +2,13 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { parseGeoInput } from '../util/geo.js';
 import { uuid } from '../util/id.js';
 import { handleClick } from './click.js';
 import { waRouter } from './wa.js';
+import { cpaRouter } from './cpa.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -31,9 +31,8 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true }));
 
   app.use(express.static(publicDir));
-
   app.use('/api/wa', waRouter);
-
+  app.use('/api/cpa', cpaRouter);
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.get('/debug/ping', requireDebug, (_req, res) => res.json({ ok: true }));

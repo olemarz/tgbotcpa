@@ -37,6 +37,7 @@ export function buildConfig(env = process.env) {
   const dbUrl = requireEnv(env, 'DATABASE_URL');
 
   const cpaPostbackUrlRaw = trim(env.CPA_POSTBACK_URL ?? env.CPA_PB_URL ?? '');
+  const cpaApiKey = trim(env.CPA_API_KEY) || '';
 
   const port = Number.parseInt(trim(env.PORT) || '3000', 10);
   if (Number.isNaN(port)) {
@@ -94,6 +95,7 @@ export function buildConfig(env = process.env) {
     port,
     dbUrl,
     cpaPostbackUrl: cpaPostbackUrlRaw,
+    cpaApiKey,
     cpaSecret,
     botUsername,
     postbackTimeoutMs,
