@@ -5,6 +5,8 @@ import adsWizard from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { uuid, shortToken } from '../util/id.js';
+import { config } from '../config.js';
+import { handleAdsUserCommand, handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
 
 // ---- Инициализация бота ----
 const token = process.env.BOT_TOKEN;
@@ -177,7 +179,39 @@ bot.command('help', async (ctx) => {
   );
 });
 
-bot.command('ads', (ctx) => ctx.scene.enter('ads-wizard'));
+bot.command('ads', async (ctx) => {
+  const userId = ctx.from?.id;
+  if (userId && config.adsMasters?.has(String(userId))) {
+    return ctx.scene.enter('ads-wizard');
+  }
+  return handleAdsUserCommand(ctx);
+});
+
+bot.action(/^skip:([0-9a-f-]{36})$/i, async (ctx) => {
+  if (ctx.scene?.current) {
+    await ctx.answerCbQuery();
+    return;
+  }
+  const offerId = ctx.match?.[1];
+  if (!offerId) {
+    await ctx.answerCbQuery();
+    return;
+  }
+  await handleAdsSkip(ctx, offerId);
+});
+
+bot.action(/^check:([0-9a-f-]{36})$/i, async (ctx) => {
+  if (ctx.scene?.current) {
+    await ctx.answerCbQuery();
+    return;
+  }
+  const offerId = ctx.match?.[1];
+  if (!offerId) {
+    await ctx.answerCbQuery();
+    return;
+  }
+  await handleAdsCheck(ctx, offerId);
+});
 
 // эхо на любой текст (вне сцен)
 bot.on('text', async (ctx, next) => {

@@ -31,6 +31,24 @@ function parseUrl(value, name) {
   }
 }
 
+function parseIdSet(value) {
+  if (!value) {
+    return new Set();
+  }
+  return new Set(
+    value
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        if (/^\d+$/.test(part)) {
+          return part;
+        }
+        return part;
+      })
+  );
+}
+
 export function buildConfig(env = process.env) {
   const botToken = requireEnv(env, 'BOT_TOKEN');
   const baseUrlRaw = requireEnv(env, 'BASE_URL');
@@ -87,6 +105,15 @@ export function buildConfig(env = process.env) {
     return Number.isNaN(parsed) ? 600 : parsed;
   })();
 
+  const adsMasters = (() => {
+    const raw =
+      trim(env.ADS_MASTERS) ||
+      trim(env.ADS_WIZARD_ADMINS) ||
+      trim(env.ADS_WIZARD_WHITELIST) ||
+      '';
+    return parseIdSet(raw);
+  })();
+
   return {
     botToken,
     baseUrl,
@@ -103,6 +130,7 @@ export function buildConfig(env = process.env) {
     nodeEnv: trim(env.NODE_ENV) || undefined,
     webhookPath,
     MIN_RATES: DEFAULT_MIN_RATES,
+    adsMasters,
   };
 }
 
