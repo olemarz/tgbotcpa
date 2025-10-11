@@ -15,9 +15,13 @@ CREATE TABLE IF NOT EXISTS offers (
   updated_at timestamptz DEFAULT now()
 );
 
-ALTER TABLE offers ADD COLUMN IF NOT EXISTS caps_window interval;
-ALTER TABLE offers ADD COLUMN IF NOT EXISTS time_targeting jsonb;
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS chat_ref jsonb;
+ALTER TABLE offers DROP COLUMN IF EXISTS caps_window;
+ALTER TABLE offers DROP COLUMN IF EXISTS time_targeting;
+ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_mode text NOT NULL DEFAULT 'any';
+ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_list text[] NOT NULL DEFAULT '{}';
+ALTER TABLE offers DROP CONSTRAINT IF EXISTS offers_geo_mode_chk;
+ALTER TABLE offers ADD CONSTRAINT offers_geo_mode_chk CHECK (geo_mode IN ('any','whitelist','blacklist'));
 
 CREATE TABLE IF NOT EXISTS clicks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

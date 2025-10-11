@@ -483,14 +483,6 @@ async function insertOffer(offer, audit) {
   ];
 
   const columnsSet = await getOffersColumns();
-  if (columnsSet.has('caps_window')) {
-    columns.push('caps_window');
-    values.push(offer.caps_window);
-  }
-  if (columnsSet.has('time_targeting')) {
-    columns.push('time_targeting');
-    values.push(offer.time_targeting || null);
-  }
   if (columnsSet.has('chat_ref')) {
     columns.push('chat_ref');
     values.push(offer.chat_ref || null);
