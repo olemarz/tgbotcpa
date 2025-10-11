@@ -4,6 +4,7 @@ import { Telegraf, Scenes, session } from 'telegraf';
 import adsWizard from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
+import { approveJoin } from '../services/conversion.js';
 import { uuid, shortToken } from '../util/id.js';
 
 // ---- Инициализация бота ----
@@ -232,12 +233,114 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
     [attrId],
   );
 
+  if (!updated.rowCount) {
+    return;
+  }
+
   try {
-    if (updated.rowCount) {
-      await sendPostback({ offer_id, tg_id: tgId, uid, click_id, event: JOIN_GROUP_EVENT });
-    }
+    await sendPostback({ offer_id, tg_id: tgId, uid, click_id, event: JOIN_GROUP_EVENT });
   } catch (e) {
     console.error('postback error:', e?.message || e);
+  }
+
+  try {
+    await approveJoin({ offer_id, tg_id: tgId, click_id });
+  } catch (e) {
+    console.error('approveJoin error:', e?.message || e);
+  }
+});
+
+bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
+  logUpdate(ctx, 'check');
+
+  const offerId = ctx.match?.[1];
+  const tgId = ctx.from?.id;
+
+  if (!offerId) {
+    await ctx.answerCbQuery('⛔️ Некорректный запрос.');
+    return;
+  }
+
+  if (!tgId) {
+    await ctx.answerCbQuery('⛔️ Не удалось определить ваш аккаунт.');
+    return;
+  }
+
+  await ctx.answerCbQuery();
+
+  try {
+    const offer = await query(
+      `SELECT id, chat_ref FROM offers WHERE id=$1 LIMIT 1`,
+      [offerId]
+    );
+
+    if (!offer.rowCount) {
+      await ctx.reply('⛔️ Оффер не найден.');
+      return;
+    }
+
+    const chatRef = offer.rows[0]?.chat_ref;
+    const chatId = chatRef?.id;
+
+    if (!chatId) {
+      await ctx.reply('⚠️ Для этого оффера не настроена проверка.');
+      return;
+    }
+
+    let member;
+    try {
+      member = await ctx.telegram.getChatMember(chatId, tgId);
+    } catch (error) {
+      console.error('getChatMember failed', {
+        offerId,
+        chatId,
+        tgId,
+        error: error?.response?.description || error?.message,
+      });
+      await ctx.reply('⚠️ Не удалось проверить вступление. Попробуйте позже.');
+      return;
+    }
+
+    if (!member || !['member', 'administrator', 'creator'].includes(member.status)) {
+      await ctx.reply('⛔️ Вы ещё не вступили в целевой чат.');
+      return;
+    }
+
+    const existing = await query(
+      `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
+      [offerId, tgId, JOIN_GROUP_EVENT]
+    );
+
+    const attribution = await query(
+      `SELECT id, click_id FROM attribution WHERE offer_id=$1 AND tg_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [offerId, tgId]
+    );
+
+    if (attribution.rowCount) {
+      await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attribution.rows[0].id]);
+    }
+
+    if (existing.rowCount) {
+      await ctx.reply('✅ Готово!');
+      return;
+    }
+
+    await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offerId, tgId, JOIN_GROUP_EVENT]);
+
+    try {
+      await approveJoin({
+        offer_id: offerId,
+        tg_id: tgId,
+        click_id: attribution.rows[0]?.click_id,
+      });
+    } catch (error) {
+      console.error('approveJoin error:', error?.message || error);
+    }
+
+    await ctx.reply('✅ Готово!');
+  } catch (error) {
+    console.error('check handler error', error?.message || error);
+    await ctx.reply('⚠️ Произошла ошибка. Попробуйте позже.');
   }
 });
 
