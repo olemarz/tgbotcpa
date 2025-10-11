@@ -8,8 +8,10 @@
     "migrate": "node src/db/migrate.js",
     "register:webhook": "node scripts/registerWebhook.js",
     "start": "node src/api/server.js",
-    "test": "node --test \"tests/**/*.test.js\"",
-    "test:ci": "node --test \"tests/**/*.test.js\""
+    "test": "npm run test:node && npm run test:ts",
+    "test:ci": "npm run test",
+    "test:node": "node --test \"tests/**/*.test.js\"",
+    "test:ts": "node --loader ts-node/esm --test \"tests/**/*.spec.ts\""
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -23,6 +25,8 @@
   "devDependencies": {
     "pg-mem": "^3.0.5",
     "supertest": "^7.0.0",
-    "nock": "^13.5.0"
+    "nock": "^13.5.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
   }
 }

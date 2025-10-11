@@ -8,6 +8,7 @@ import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { sendPostback } from '../services/postback.js';
 import { webhookCallback } from '../bot/telegraf.js';
+import { parseGeoInput } from '../util/geo.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -105,6 +106,84 @@ export function createApp() {
 
     const redirectUrl = `https://t.me/${botUsername}?start=${startToken}`;
     return res.redirect(302, redirectUrl);
+  });
+
+  app.post('/offers', async (req, res) => {
+    const {
+      target_url: targetUrlRaw,
+      event_type: eventTypeRaw,
+      geo_input: geoInputRaw,
+      name,
+      base_rate: baseRate,
+      premium_rate: premiumRate,
+      caps_total: capsTotal,
+    } = req.body || {};
+
+    const target_url = typeof targetUrlRaw === 'string' ? targetUrlRaw.trim() : '';
+    const event_type = typeof eventTypeRaw === 'string' ? eventTypeRaw.trim() : '';
+    const geo_input = typeof geoInputRaw === 'string' ? geoInputRaw.trim() : undefined;
+    const normalizedBaseRate =
+      baseRate !== undefined && baseRate !== null ? Number.parseInt(String(baseRate), 10) : undefined;
+    const normalizedPremiumRate =
+      premiumRate !== undefined && premiumRate !== null ? Number.parseInt(String(premiumRate), 10) : undefined;
+    const normalizedCapsTotal =
+      capsTotal !== undefined && capsTotal !== null ? Number.parseInt(String(capsTotal), 10) : undefined;
+
+    if (!target_url) {
+      return res.status(400).json({ ok: false, error: 'target_url is required' });
+    }
+
+    if (!event_type) {
+      return res.status(400).json({ ok: false, error: 'event_type is required' });
+    }
+
+    const geoList = geo_input ? parseGeoInput(geo_input) : [];
+    const offerId = uuid();
+
+    const columns = ['id', 'target_url', 'event_type'];
+    const values = [offerId, target_url, event_type];
+
+    if (typeof name === 'string' && name.trim()) {
+      columns.push('name');
+      values.push(name.trim());
+    }
+
+    if (Number.isInteger(normalizedBaseRate)) {
+      columns.push('base_rate');
+      values.push(normalizedBaseRate);
+    }
+
+    if (Number.isInteger(normalizedPremiumRate)) {
+      columns.push('premium_rate');
+      values.push(normalizedPremiumRate);
+    }
+
+    if (Number.isInteger(normalizedCapsTotal)) {
+      columns.push('caps_total');
+      values.push(normalizedCapsTotal);
+    }
+
+    if (geo_input !== undefined) {
+      columns.push('geo_input');
+      values.push(geo_input);
+    }
+
+    columns.push('geo_list');
+    values.push(geoList.length > 0 ? geoList : null);
+
+    const placeholders = columns.map((_, idx) => `$${idx + 1}`);
+
+    try {
+      await query(
+        `INSERT INTO offers (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
+        values
+      );
+    } catch (error) {
+      console.error('offer insert error', error);
+      return res.status(500).json({ ok: false, error: 'failed to create offer' });
+    }
+
+    return res.status(201).json({ ok: true, offer_id: offerId, geo_list: geoList });
   });
 
   app.post('/debug/complete', requireDebug, async (req, res) => {

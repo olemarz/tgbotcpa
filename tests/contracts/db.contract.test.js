@@ -1,4 +1,4 @@
-import '../setup-env.js';
+import '../setup-env.cjs';
 import assert from 'node:assert/strict';
 import { after, before, describe, it, test } from 'node:test';
 import { Client } from 'pg';

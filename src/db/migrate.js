@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS offers (
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS caps_window interval;
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS time_targeting jsonb;
 ALTER TABLE offers ADD COLUMN IF NOT EXISTS chat_ref jsonb;
+ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_input text;
+ALTER TABLE offers ADD COLUMN IF NOT EXISTS geo_list text[];
 
 CREATE TABLE IF NOT EXISTS clicks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

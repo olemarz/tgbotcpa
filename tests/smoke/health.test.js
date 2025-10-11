@@ -1,4 +1,4 @@
-import '../setup-env.js';
+import '../setup-env.cjs';
 import { describe, it } from 'node:test';
 import { createApp } from '../../src/api/app.js';
 import request from 'supertest';
