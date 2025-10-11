@@ -20,7 +20,7 @@ if (config.dbUrl.startsWith('pgmem://')) {
   pool = new Pool({ connectionString: config.dbUrl });
 }
 
-export async function query(q, params) {
+async function execute(q, params) {
   const client = await pool.connect();
   try {
     return await client.query(q, params);
@@ -29,7 +29,25 @@ export async function query(q, params) {
   }
 }
 
+export async function query(q, params) {
+  return execute(q, params);
+}
+
 export { pool };
+
+export const db = {
+  query,
+  async one(q, params) {
+    const res = await execute(q, params);
+    if (!res.rowCount) {
+      throw new Error('No data returned from query');
+    }
+    return res.rows[0];
+  },
+  async none(q, params) {
+    await execute(q, params);
+  },
+};
 
 export async function insertOfferAuditLog({ offerId, action, userId, chatId, details }) {
   const columns = ['id', 'offer_id', 'action'];
