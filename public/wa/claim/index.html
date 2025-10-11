@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Привязка токена</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #111217;
+        color: #ffffff;
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+      }
+
+      main {
+        text-align: center;
+        padding: 32px;
+      }
+
+      p {
+        font-size: 18px;
+        line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p id="status">⏳ Привязываем токен…</p>
+    </main>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function () {
+        const statusEl = document.getElementById('status');
+        const token = Telegram.WebApp.initDataUnsafe?.start_param || '';
+        const initData = Telegram.WebApp.initData || '';
+
+        Telegram.WebApp.ready();
+
+        async function claimToken() {
+          if (!token) {
+            statusEl.textContent = '❌ Не найден стартовый параметр';
+            return;
+          }
+
+          try {
+            const response = await fetch('/api/wa/claim', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ token, initData }),
+            });
+
+            const payload = await response
+              .json()
+              .catch(() => ({ ok: false, error: 'BAD_RESPONSE' }));
+
+            if (payload?.ok) {
+              statusEl.textContent = '✅ Привязано';
+              setTimeout(() => Telegram.WebApp.close(), 250);
+              return;
+            }
+
+            const errorText = payload?.error || 'UNKNOWN_ERROR';
+            statusEl.textContent = `❌ ${errorText}`;
+          } catch (error) {
+            console.error('claim error', error);
+            statusEl.textContent = '❌ Сетевая ошибка';
+          }
+        }
+
+        claimToken();
+      })();
+    </script>
+  </body>
+</html>
