@@ -17,12 +17,28 @@ const requireDebug = (req, res, next) => {
   return next();
 };
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.resolve(__dirname, '../../public');
+
 export function createApp() {
   const app = express();
 
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+// parsers (Express ≥4.16 — bodyParser не нужен)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
+// static WebApp (public/)
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// server.js лежит в src/api → public на уровень выше
+const publicDir = path.resolve(__dirname, '../../public');
+app.use(express.static(publicDir));
+
+// WebApp claim API
+import { waRouter } from './wa.js';
+app.use('/api/wa', waRouter);
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.get('/debug/ping', requireDebug, (_req, res) => res.json({ ok: true }));
