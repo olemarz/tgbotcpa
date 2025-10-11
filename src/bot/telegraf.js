@@ -4,7 +4,8 @@ import { Telegraf, Scenes, session } from 'telegraf';
 import adsWizard from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
-import { approveJoin } from '../services/conversion.js';
+import { approveJoin, createConversion } from '../services/conversion.js';
+import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { config } from '../config.js';
 import { handleAdsUserCommand, handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
@@ -657,7 +658,13 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
 
   try {
     const offer = await query(
-      `SELECT id, chat_ref FROM offers WHERE id=$1 LIMIT 1`,
+      `
+        SELECT id,
+               COALESCE(NULLIF(payout_cents, 0), NULLIF(premium_rate, 0), NULLIF(base_rate, 0), 0) AS payout_cents
+        FROM offers
+        WHERE id=$1
+        LIMIT 1
+      `,
       [offerId]
     );
 
@@ -666,62 +673,27 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
       return;
     }
 
-    const chatRef = offer.rows[0]?.chat_ref;
-    const chatId = chatRef?.id;
+    const payoutCents = Number(offer.rows[0]?.payout_cents ?? 0);
 
-    if (!chatId) {
-      await ctx.reply('⚠️ Для этого оффера не настроена проверка.');
+    const { ok } = await joinCheck({
+      offer_id: offerId,
+      tg_id: tgId,
+      telegram: ctx.telegram,
+    });
+
+    if (!ok) {
+      await ctx.reply('Пока не видим вступления…');
       return;
     }
-
-    let member;
-    try {
-      member = await ctx.telegram.getChatMember(chatId, tgId);
-    } catch (error) {
-      console.error('getChatMember failed', {
-        offerId,
-        chatId,
-        tgId,
-        error: error?.response?.description || error?.message,
-      });
-      await ctx.reply('⚠️ Не удалось проверить вступление. Попробуйте позже.');
-      return;
-    }
-
-    if (!member || !['member', 'administrator', 'creator'].includes(member.status)) {
-      await ctx.reply('⛔️ Вы ещё не вступили в целевой чат.');
-      return;
-    }
-
-    const existing = await query(
-      `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
-      [offerId, tgId, JOIN_GROUP_EVENT]
-    );
-
-    const attribution = await query(
-      `SELECT id, click_id FROM attribution WHERE offer_id=$1 AND tg_id=$2 ORDER BY created_at DESC LIMIT 1`,
-      [offerId, tgId]
-    );
-
-    if (attribution.rowCount) {
-      await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attribution.rows[0].id]);
-    }
-
-    if (existing.rowCount) {
-      await ctx.reply('✅ Готово!');
-      return;
-    }
-
-    await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offerId, tgId, JOIN_GROUP_EVENT]);
 
     try {
-      await approveJoin({
+      await createConversion({
         offer_id: offerId,
         tg_id: tgId,
-        click_id: attribution.rows[0]?.click_id,
+        amount_cents: payoutCents,
       });
     } catch (error) {
-      console.error('approveJoin error:', error?.message || error);
+      console.error('createConversion error', error?.message || error);
     }
 
     await ctx.reply('✅ Готово!');
