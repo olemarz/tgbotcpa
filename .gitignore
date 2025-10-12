@@ -1,5 +1,6 @@
 node_modules/
 .env
+var/
 *.bak
 .DS_Store
 npm-debug.log*

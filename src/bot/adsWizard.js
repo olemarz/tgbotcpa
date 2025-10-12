@@ -6,6 +6,7 @@ import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
 import { config } from '../config.js';
 import { query, insertOfferAuditLog } from '../db/index.js';
 import { uuid } from '../util/id.js';
+import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
 
 const logPrefix = '[adsWizard]';
@@ -20,7 +21,6 @@ const eventLabels = {
 };
 
 const minRates = config.MIN_RATES || {};
-
 const allowedTelegramHosts = new Set(['t.me', 'telegram.me', 'telegram.dog']);
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,24 +31,27 @@ const CANCEL_KEYWORDS = new Set(['/cancel', 'отмена', '[отмена]', 'c
 const BACK_KEYWORDS = new Set(['/back', 'назад', '[назад]']);
 
 const Step = {
-  INTRO: 0,
   TARGET_URL: 1,
   EVENT_TYPE: 2,
-  BASE_BID: 3,
-  PREMIUM_BID: 4,
-  TOTAL_CAP: 5,
-  CONFIRM: 6,
+  BASE_RATE: 3,
+  PREMIUM_RATE: 4,
+  CAPS_TOTAL: 5,
+  GEO_TARGETING: 6,
+  OFFER_NAME: 7,
+  OFFER_SLUG: 8,
 };
 
 const STEP_NUMBERS = {
   [Step.TARGET_URL]: 1,
   [Step.EVENT_TYPE]: 2,
-  [Step.BASE_BID]: 3,
-  [Step.PREMIUM_BID]: 4,
-  [Step.TOTAL_CAP]: 5,
+  [Step.BASE_RATE]: 3,
+  [Step.PREMIUM_RATE]: 4,
+  [Step.CAPS_TOTAL]: 5,
+  [Step.GEO_TARGETING]: 6,
+  [Step.OFFER_NAME]: 7,
+  [Step.OFFER_SLUG]: 8,
 };
-
-const TOTAL_INPUT_STEPS = 6;
+const TOTAL_INPUT_STEPS = Math.max(...Object.values(STEP_NUMBERS));
 
 let offersColumnsPromise;
 async function getOffersColumns() {
@@ -83,7 +86,16 @@ async function slugExists(slug) {
   const res = await query('SELECT 1 FROM offers WHERE slug = $1 LIMIT 1', [slug]);
   return res.rowCount > 0;
 }
-
+function slugify(name) {
+  const base = (name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return base || `offer-${Math.random().toString(36).slice(2, 6)}`;
+}
 async function ensureUniqueSlug(base) {
   let slug = base;
   let counter = 2;
@@ -95,826 +107,245 @@ async function ensureUniqueSlug(base) {
   }
   return slug;
 }
-
 function parseNumber(text) {
   if (!text) return null;
   const normalized = text.replace(',', '.');
-  if (!/^\d+(?:[.,]\d+)?$/.test(normalized.trim())) {
-    return null;
-  }
+  if (!/^\d+(?:[.,]\d+)?$/.test(normalized.trim())) return null;
   const n = Number(normalized);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100) / 100;
 }
-
-function formatCapsTotal(value) {
-  if (!value) return 'без ограничений';
-  return String(value);
+function parseIntNonNegative(text) {
+  if (!text) return null;
+  const v = Number(String(text).trim());
+  if (!Number.isInteger(v) || v < 0) return null;
+  return v;
 }
+function formatRate(v) { return `${v} ₽`; }
+function getMessageText(ctx) { return ctx.message?.text?.trim(); }
+function isCancel(ctx) { const t = getMessageText(ctx); return !!t && CANCEL_KEYWORDS.has(t.toLowerCase()); }
+function isBack(ctx) { const t = getMessageText(ctx); return !!t && BACK_KEYWORDS.has(t.toLowerCase()); }
+async function cancelWizard(ctx, msg='Мастер отменён.') { await ctx.reply(msg); return ctx.scene.leave(); }
 
-function formatChatRef(chatRef) {
-  if (!chatRef) return '—';
-  const parts = [];
-  if (chatRef.type) parts.push(chatRef.type);
-  if (chatRef.title) parts.push(chatRef.title);
-  if (chatRef.username) parts.push(`@${chatRef.username}`);
-  if (chatRef.start_param) parts.push(`start=${chatRef.start_param}`);
-  if (chatRef.startapp_param) parts.push(`startapp=${chatRef.startapp_param}`);
-  if (!parts.length && chatRef.id) parts.push(`#${chatRef.id}`);
-  return parts.join(' · ');
-}
-
-function formatRate(value) {
-  return `${value} ₽`;
-}
-
-function autoTitleFromLink(link) {
-  if (!link) {
-    return 'Offer';
-  }
-
+function normalizeTelegramUrl(raw) {
   try {
-    const url = new URL(link);
-    const segments = url.pathname.split('/').filter(Boolean);
-
-    for (const segment of segments) {
-      if (segment && segment.toLowerCase() !== 'c') {
-        return segment;
-      }
-    }
-
-    if (segments.length > 0) {
-      return segments[segments.length - 1] || 'Offer';
-    }
-
-    const hostname = url.hostname.replace(/^www\./, '');
-    if (hostname) {
-      const base = hostname.split('.')[0];
-      if (base) {
-        return base;
-      }
-    }
-  } catch (error) {
-    // ignore
-  }
-
-  return 'Offer';
+    const u = new URL(raw.trim());
+    if (!allowedTelegramHosts.has(u.hostname)) return null;
+    return u.toString();
+  } catch { return null; }
 }
 
-function autoSlugFromTitle(title) {
-  const normalized = String(title || 'offer')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-  const base = normalized || 'offer';
-  const suffix = Math.random().toString(16).slice(2, 8);
-  const trimmed = base.slice(0, Math.max(1, 60 - suffix.length - 1));
-  return `${trimmed}-${suffix}`;
-}
-
-function markAwaitingTargetLink(ctx) {
-  if (!ctx.session) {
-    ctx.session = {};
-  }
-  ctx.session.mode = 'offer:create';
-  ctx.session.awaiting = 'target_link';
-  delete ctx.session.target_link;
-  delete ctx.session.raw_target_link;
-}
-
-function clearAwaitingTargetLink(ctx) {
-  if (!ctx.session) {
-    return;
-  }
-  if (ctx.session.mode === 'offer:create') {
-    delete ctx.session.mode;
-  }
-  if (ctx.session.awaiting === 'target_link') {
-    delete ctx.session.awaiting;
-  }
-}
-
-function getMessageText(ctx) {
-  return ctx.message?.text?.trim();
-}
-
-function isCancel(ctx) {
-  const text = getMessageText(ctx);
-  if (!text) return false;
-  return CANCEL_KEYWORDS.has(text.toLowerCase());
-}
-
-function isBack(ctx) {
-  const text = getMessageText(ctx);
-  if (!text) return false;
-  return BACK_KEYWORDS.has(text.toLowerCase());
-}
-
-async function cancelWizard(ctx, message = 'Мастер отменён.') {
-  clearAwaitingTargetLink(ctx);
-  if (ctx.session) {
-    delete ctx.session.target_link;
-    delete ctx.session.raw_target_link;
-  }
-  await ctx.reply(message);
-  return ctx.scene.leave();
-}
-
-// Там, где показывается шаг "Пришлите ссылку на канал/чат"
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
-  markAwaitingTargetLink(ctx);
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Пришлите ссылку на канал/группу/бота в формате https://t.me/...\n` +
-      'Команды: [Отмена] — выйти из мастера.'
+    'Команды: [Отмена] — выйти из мастера.'
   );
 }
-
 function buildEventKeyboard() {
-  const rows = EVENT_ORDER.map((type) => [
-    Markup.button.callback(eventLabels[type] || type, `event:${type}`),
-  ]);
+  const rows = EVENT_ORDER.map((type) => [Markup.button.callback(eventLabels[type] || type, `event:${type}`)]);
   rows.push([Markup.button.callback('↩️ Назад', 'nav:back')]);
   return Markup.inlineKeyboard(rows);
 }
-
 async function promptEventType(ctx) {
   const stepNum = STEP_NUMBERS[Step.EVENT_TYPE];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Выберите тип целевого действия:`,
-    buildEventKeyboard()
-  );
+  await ctx.reply(`Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Выберите тип целевого действия:`, buildEventKeyboard());
 }
-
-async function promptBaseBid(ctx) {
-  const { action_type: actionType } = ctx.wizard.state.offer;
-  const min = Math.max(5, minRates[actionType]?.base ?? 0);
-  const stepNum = STEP_NUMBERS[Step.BASE_BID];
+async function promptBaseRate(ctx) {
+  const { event_type: eventType } = ctx.wizard.state.offer;
+  const min = minRates[eventType]?.base ?? 0;
+  const stepNum = STEP_NUMBERS[Step.BASE_RATE];
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите базовую ставку, не ниже ${min}.\n` +
-      'Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].'
+    'Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].'
   );
 }
-
-async function promptPremiumBid(ctx) {
-  const stepNum = STEP_NUMBERS[Step.PREMIUM_BID];
-  const { base_bid: baseBid, action_type: actionType } = ctx.wizard.state.offer;
-  const minPremium = Math.max(baseBid ?? 0, 10, minRates[actionType]?.premium ?? 0);
+async function promptPremiumRate(ctx) {
+  const stepNum = STEP_NUMBERS[Step.PREMIUM_RATE];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей (не ниже ${minPremium}).\n` +
-      'Она не может быть ниже базовой ставки, 10 ₽ или минимального порога для премиума. Команды: [Назад], [Отмена].'
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей.\n` +
+    'Она не может быть ниже базовой ставки или минимального порога для премиума. Команды: [Назад], [Отмена].'
   );
 }
-
-async function promptTotalCap(ctx) {
-  const stepNum = STEP_NUMBERS[Step.TOTAL_CAP];
+async function promptCapsTotal(ctx) {
+  const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число, 0 = без ограничений).\n` +
-      'Команды: [Назад], [Отмена].'
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число, 0 — без ограничений).\n` +
+    'Команды: [Назад], [Отмена].'
+  );
+}
+async function promptGeoTargeting(ctx) {
+  const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
+  await ctx.reply(
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите список стран/регионов через запятую (например: RU, UA; либо JSON).\n` +
+    `Пусто или 0 — без гео-ограничений. Команды: [Назад], [Отмена].`
+  );
+}
+async function promptOfferName(ctx) {
+  const stepNum = STEP_NUMBERS[Step.OFFER_NAME];
+  await ctx.reply(`Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите название оффера.\nКоманды: [Назад], [Отмена].`);
+}
+async function promptOfferSlug(ctx) {
+  const stepNum = STEP_NUMBERS[Step.OFFER_SLUG];
+  const { title } = ctx.wizard.state.offer;
+  const auto = slugify(title || '');
+  ctx.wizard.state.autoSlug = auto;
+  await ctx.reply(
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.\n` +
+    `Если хотите оставить — отправьте «-». Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.\n` +
+    'Команды: [Назад], [Отмена].',
+    { parse_mode: 'HTML' }
   );
 }
 
-function parseTelegramUrl(rawUrl) {
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch (error) {
-    throw new Error('Не получилось разобрать ссылку. Проверьте формат https://t.me/...');
-  }
-
-  if (url.protocol !== 'https:') {
-    throw new Error('Нужна защищённая ссылка https://t.me/...');
-  }
-
-  if (!allowedTelegramHosts.has(url.hostname.toLowerCase())) {
-    throw new Error('Сейчас поддерживаются только ссылки на t.me.');
-  }
-
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (!segments.length) {
-    throw new Error('Ссылка должна содержать username или идентификатор ресурса.');
-  }
-
-  return {
-    url,
-    segments,
-    normalized: `https://t.me/${segments.join('/')}${url.search}`,
-    searchParams: url.searchParams,
+async function createOfferReturningId(offer) {
+  const cols = await getOffersColumns();
+  const data = {
+    id: uuid(),
+    title: offer.title || null,
+    name: offer.name ?? offer.title ?? null,
+    slug: offer.slug || null,
+    event_type: offer.event_type || null,
+    base_rate: offer.base_rate ?? null,
+    premium_rate: offer.premium_rate ?? null,
+    caps_total: offer.caps_total ?? null,
+    geo_mode: offer.geo_mode,
+    geo_input: offer.geo_input ?? null,
+    geo_list: Array.isArray(offer.geo_list) && offer.geo_list.length ? offer.geo_list : undefined,
+    target_url: offer.target_url || null,
+    created_by_tg: offer.created_by_tg ?? null,
   };
-}
-
-function buildChatLookup(parsed) {
-  const [first, second, third] = parsed.segments;
-
-  if (first === 'c') {
-    if (!second || !/^\d+$/.test(second)) {
-      throw new Error('Ссылка вида t.me/c/... должна содержать числовой идентификатор чата.');
-    }
-    const internalId = `-100${second}`;
-    const messageId = third && /^\d+$/.test(third) ? Number(third) : null;
-    const threadIdParam = parsed.searchParams.get('thread') || parsed.searchParams.get('comment');
-    const threadId = threadIdParam && /^\d+$/.test(threadIdParam) ? Number(threadIdParam) : null;
-    return {
-      chatId: Number(internalId),
-      messageId,
-      threadId,
-      username: null,
-      linkType: 'internal',
-    };
+  const names = [], values = [], params = [];
+  let i = 1;
+  for (const [k, v] of Object.entries(data)) {
+    if (!cols.has(k)) continue;
+    if (v === undefined) continue;
+    names.push(k); params.push(`$${i++}`); values.push(v);
   }
-
-  if (/^\+/.test(first) || first.toLowerCase() === 'joinchat') {
-    throw new Error('Инвайт-ссылки t.me/+... не подходят. Укажите публичный @username чата или бота.');
-  }
-
-  if (!/^[a-zA-Z0-9_]{5,32}$/.test(first)) {
-    throw new Error('Username должен содержать 5–32 символа: латиница, цифры и подчёркивания.');
-  }
-
-  const messageId = second && /^\d+$/.test(second) ? Number(second) : null;
-  const threadIdParam = parsed.searchParams.get('thread') || parsed.searchParams.get('comment');
-  const threadId = threadIdParam && /^\d+$/.test(threadIdParam) ? Number(threadIdParam) : null;
-
-  return {
-    chatId: `@${first}`,
-    username: first,
-    messageId,
-    threadId,
-    linkType: 'username',
-  };
-}
-
-async function resolveTelegramTarget(ctx, rawUrl) {
-  const parsed = parseTelegramUrl(rawUrl);
-  const lookup = buildChatLookup(parsed);
-
-  let chat;
-  try {
-    chat = await ctx.telegram.getChat(lookup.chatId);
-  } catch (error) {
-    console.warn(`${logPrefix} target lookup failed`, {
-      reason: error?.response?.description || error?.message,
-      lookup: typeof lookup.chatId === 'string' ? lookup.chatId : 'id',
-    });
-    throw new Error(
-      'Не удалось проверить ссылку в Telegram. Убедитесь, что бот добавлен в чат и имеет права на просмотр.'
-    );
-  }
-
-  const titleParts = [chat.title, chat.first_name, chat.last_name].filter(Boolean);
-  const title = titleParts.join(' ') || chat.username || chat.id;
-  const isBot = typeof chat.username === 'string' && chat.username.toLowerCase().endsWith('bot');
-
-  const targetMeta = {
-    normalizedUrl: parsed.normalized,
-    chatId: chat.id,
-    chatType: chat.type,
-    title,
-    username: chat.username || lookup.username || undefined,
-    messageId: lookup.messageId,
-    threadId: lookup.threadId,
-    isForum: Boolean(chat.is_forum),
-    isBot,
-    startParam: (() => {
-      const value = parsed.searchParams.get('start');
-      return value && value.trim() ? value.trim() : undefined;
-    })(),
-    startAppParam: (() => {
-      const value = parsed.searchParams.get('startapp');
-      return value && value.trim() ? value.trim() : undefined;
-    })(),
-    linkType: lookup.linkType,
-  };
-
-  console.info(`${logPrefix} target resolved`, {
-    chatType: targetMeta.chatType,
-    hasMessage: Boolean(targetMeta.messageId),
-    linkType: targetMeta.linkType,
-    hasStartParam: Boolean(targetMeta.startParam || targetMeta.startAppParam),
-  });
-
-  return targetMeta;
-}
-
-function ensureEventCompatibility(targetMeta, eventType) {
-  if (!targetMeta) {
-    return 'Сначала укажите ссылку на ресурс.';
-  }
-
-  switch (eventType) {
-    case EVENT_TYPES.join_group: {
-      if (!['group', 'supergroup', 'channel'].includes(targetMeta.chatType)) {
-        return 'Для вступления нужна ссылка на группу или канал.';
-      }
-      break;
-    }
-    case EVENT_TYPES.forward:
-    case EVENT_TYPES.reaction:
-    case EVENT_TYPES.comment: {
-      if (!targetMeta.messageId) {
-        return 'Для этого действия нужна ссылка на конкретное сообщение (https://t.me/.../123).';
-      }
-      if (!['channel', 'supergroup', 'group'].includes(targetMeta.chatType)) {
-        return 'Ссылка должна вести на сообщение в группе или канале.';
-      }
-      if (
-        eventType === EVENT_TYPES.comment &&
-        !targetMeta.threadId
-      ) {
-        return 'Для комментариев используйте ссылку на обсуждение (с параметром ?comment= или ?thread=).';
-      }
-      break;
-    }
-    case EVENT_TYPES.start_bot: {
-      if (!targetMeta.isBot) {
-        return 'Нужна ссылка на бота или мини-апп (username должен заканчиваться на bot).';
-      }
-      if (!targetMeta.startParam && !targetMeta.startAppParam) {
-        return 'Добавьте к ссылке параметр start=... или startapp=... — он нужен для трекинга старта.';
-      }
-      break;
-    }
-    case EVENT_TYPES.paid: {
-      if (targetMeta.isBot) {
-        if (!targetMeta.startParam && !targetMeta.startAppParam) {
-          return 'Для оплаты через бота укажите параметр start=... или startapp=... для трекинга.';
-        }
-      } else if (!targetMeta.messageId) {
-        return 'Для платного действия нужна ссылка на конкретное сообщение (например с кнопкой оплаты).';
-      }
-      break;
-    }
-    default:
-      break;
-  }
-
-  return null;
-}
-
-function buildChatRef(targetMeta) {
-  if (!targetMeta) return null;
-  const ref = {
-    id: targetMeta.chatId,
-    type: targetMeta.chatType,
-    title: targetMeta.title,
-    username: targetMeta.username,
-    message_id: targetMeta.messageId,
-    thread_id: targetMeta.threadId,
-    link_type: targetMeta.linkType,
-  };
-  if (targetMeta.startParam) {
-    ref.start_param = targetMeta.startParam;
-  }
-  if (targetMeta.startAppParam) {
-    ref.startapp_param = targetMeta.startAppParam;
-  }
-  return ref;
-}
-
-function buildSummary(offer) {
-  const title = offer.title || offer.name || 'Offer';
-  const lines = [
-    `<b>${title}</b>`,
-    `Целевая ссылка: ${offer.target_link}`,
-    `Цель: ${formatChatRef(offer.chat_ref)}`,
-    `ЦД: ${eventLabels[offer.action_type] || offer.action_type}`,
-    `Базовая ставка: ${formatRate(offer.base_bid)}`,
-    `Премиум ставка: ${formatRate(offer.premium_bid)}`,
-    `Лимит: ${formatCapsTotal(offer.total_cap)}`,
-  ];
-  lines.push(`Slug: <code>${offer.slug}</code>`);
-  return lines.join('\n');
-}
-
-async function promptForStep(ctx, step) {
-  switch (step) {
-    case Step.TARGET_URL:
-      await promptTargetUrl(ctx);
-      break;
-    case Step.EVENT_TYPE:
-      await promptEventType(ctx);
-      break;
-    case Step.BASE_BID:
-      await promptBaseBid(ctx);
-      break;
-    case Step.PREMIUM_BID:
-      await promptPremiumBid(ctx);
-      break;
-    case Step.TOTAL_CAP:
-      await promptTotalCap(ctx);
-      break;
-    default:
-      break;
-  }
-}
-
-async function insertOffer(offer, audit) {
-  const offerId = uuid();
-  const { url: trackingUrl } = buildTrackingUrl(offerId, { src: 'heypay' });
-  const columns = ['id'];
-  const values = [offerId];
-
-  const columnsSet = await getOffersColumns();
-
-  const targetLink = offer.target_link || offer.target_url;
-  if (columnsSet.has('target_link')) {
-    columns.push('target_link');
-    values.push(targetLink);
-  }
-  if (columnsSet.has('target_url')) {
-    columns.push('target_url');
-    values.push(targetLink);
-  }
-
-  const actionType = offer.action_type || offer.event_type;
-  if (columnsSet.has('action_type')) {
-    columns.push('action_type');
-    values.push(actionType);
-  }
-  if (columnsSet.has('event_type')) {
-    columns.push('event_type');
-    values.push(actionType);
-  }
-
-  const title = offer.title || offer.name || 'Offer';
-  if (columnsSet.has('title')) {
-    columns.push('title');
-    values.push(title);
-  }
-  if (columnsSet.has('name')) {
-    columns.push('name');
-    values.push(title);
-  }
-
-  if (columnsSet.has('slug')) {
-    columns.push('slug');
-    values.push(offer.slug);
-  }
-
-  const baseBid = Math.round(offer.base_bid ?? offer.base_rate ?? 0);
-  if (columnsSet.has('base_bid')) {
-    columns.push('base_bid');
-    values.push(baseBid);
-  }
-  if (columnsSet.has('base_rate')) {
-    columns.push('base_rate');
-    values.push(baseBid);
-  }
-
-  const premiumBid = Math.round(offer.premium_bid ?? offer.premium_rate ?? 0);
-  if (columnsSet.has('premium_bid')) {
-    columns.push('premium_bid');
-    values.push(premiumBid);
-  }
-  if (columnsSet.has('premium_rate')) {
-    columns.push('premium_rate');
-    values.push(premiumBid);
-  }
-
-  const totalCap = offer.total_cap ?? offer.caps_total ?? 0;
-  if (columnsSet.has('total_cap')) {
-    columns.push('total_cap');
-    values.push(totalCap);
-  }
-  if (columnsSet.has('caps_total')) {
-    columns.push('caps_total');
-    values.push(totalCap);
-  }
-
-  if (columnsSet.has('cap_window')) {
-    columns.push('cap_window');
-    values.push(offer.cap_window ?? 0);
-  }
-
-  if (columnsSet.has('time_targeting')) {
-    columns.push('time_targeting');
-    values.push(offer.time_targeting ?? null);
-  }
-
-  if (columnsSet.has('status')) {
-    columns.push('status');
-    values.push('active');
-  }
-  if (columnsSet.has('tracking_url')) {
-    columns.push('tracking_url');
-    values.push(trackingUrl);
-  }
-  if (columnsSet.has('geo_mode')) {
-    columns.push('geo_mode');
-    values.push(offer.geo_mode ?? 'any');
-  }
-  if (columnsSet.has('geo_list')) {
-    columns.push('geo_list');
-    values.push(Array.isArray(offer.geo_list) ? offer.geo_list : []);
-  }
-  if (columnsSet.has('geo_input')) {
-    columns.push('geo_input');
-    values.push(offer.geo_input ?? null);
-  }
-  if (columnsSet.has('geo_whitelist')) {
-    columns.push('geo_whitelist');
-    values.push(Array.isArray(offer.geo_whitelist) ? offer.geo_whitelist : []);
-  }
-  if (columnsSet.has('chat_ref')) {
-    columns.push('chat_ref');
-    values.push(offer.chat_ref || null);
-  }
-
-  const placeholders = columns.map((_, i) => `$${i + 1}`);
-  const sql = `INSERT INTO offers (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`;
+  const sql = `INSERT INTO offers (${names.join(',')}) VALUES (${params.join(',')}) RETURNING id`;
   const res = await query(sql, values);
-  const insertedId = res.rows[0]?.id || offerId;
-
-  await insertOfferAuditLog({
-    offerId: insertedId,
-    action: 'created',
-    userId: audit.userId,
-    chatId: audit.chatId,
-    details: {
-      started_at: audit.startedAt,
-    },
-  });
-
-  console.info(`${logPrefix} offer inserted`, {
-    offerId: insertedId,
-    slug: offer.slug,
-    eventType: offer.action_type || offer.event_type,
-  });
-
-  return { id: insertedId, trackingUrl };
+  return res.rows[0].id;
+}
+async function finishAndSend(ctx, offerId) {
+  let trackingUrl;
+  try { trackingUrl = await buildTrackingUrl(offerId); }
+  catch { trackingUrl = `${config.BASE_URL.replace(/\/+$/,'')}/click/${offerId}`; }
+  await logTrackingLink(offerId, ctx.wizard.state.offer?.title, trackingUrl);
+  await ctx.reply(
+    ['✅ Оффер создан!', `ID: <code>${offerId}</code>`, `Ссылка для трафика: ${trackingUrl}`].join('\n'),
+    { parse_mode: 'HTML', disable_web_page_preview: true }
+  );
+  if (config.ADMIN_IDS?.length) {
+    for (const chatId of config.ADMIN_IDS) {
+      await notifyChat(ctx.telegram, chatId, `Новый оффер #${offerId} создан. ${trackingUrl}`);
+    }
+  }
 }
 
-const adsWizard = new Scenes.WizardScene(
-  'ads-wizard',
+const wizard = new Scenes.WizardScene(
+  'adsWizard',
+  async (ctx) => { ctx.wizard.state.offer ??= {}; await promptTargetUrl(ctx); return ctx.wizard.selectStep(Step.TARGET_URL); },
   async (ctx) => {
-    ctx.wizard.state.offer = {};
-    ctx.wizard.state.audit = {
-      userId: ctx.from?.id,
-      chatId: ctx.chat?.id,
-      startedAt: new Date().toISOString(),
-    };
-    await ctx.reply(
-      '🧙‍♂️ Мастер размещения оффера. Отправляйте данные последовательно — всегда можно вернуться [Назад] или выйти командой [Отмена].'
-    );
-    await promptForStep(ctx, Step.TARGET_URL);
-    return ctx.wizard.next();
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const text = getMessageText(ctx);
+    const normalized = normalizeTelegramUrl(text || '');
+    if (!normalized) { await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.'); return; }
+    ctx.wizard.state.offer.target_url = normalized;
+    await promptEventType(ctx);
+    return ctx.wizard.selectStep(Step.EVENT_TYPE);
   },
   async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      await ctx.reply('Мы только начинаем. Чтобы выйти, используйте команду [Отмена].');
-      return;
-    }
-
-    const url = getMessageText(ctx);
-    if (!url) {
-      await ctx.reply('Нужна ссылка вида https://t.me/... Попробуйте ещё раз.');
-      return;
-    }
-
-    let targetMeta;
-    try {
-      targetMeta = await resolveTelegramTarget(ctx, url);
-    } catch (error) {
-      await ctx.reply(error.message || 'Не удалось обработать ссылку. Попробуйте другую.');
-      return;
-    }
-
-    ctx.wizard.state.offer.target_link = targetMeta.normalizedUrl;
-    ctx.wizard.state.offer.target_url = targetMeta.normalizedUrl;
-    ctx.wizard.state.offer.target_meta = targetMeta;
-    ctx.wizard.state.offer.chat_ref = buildChatRef(targetMeta);
-    if (!ctx.session) {
-      ctx.session = {};
-    }
-    ctx.session.target_link = targetMeta.normalizedUrl;
-    ctx.session.raw_target_link = url;
-    clearAwaitingTargetLink(ctx);
-
-    await promptForStep(ctx, Step.EVENT_TYPE);
-    return ctx.wizard.next();
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const cb = ctx.callbackQuery?.data;
+    if (!cb?.startsWith?.('event:')) { await promptEventType(ctx); return; }
+    ctx.wizard.state.offer.event_type = cb.slice('event:'.length);
+    await ctx.answerCbQuery();
+    await promptBaseRate(ctx);
+    return ctx.wizard.selectStep(Step.BASE_RATE);
   },
   async (ctx) => {
-    if (ctx.message) {
-      if (isCancel(ctx)) {
-        return cancelWizard(ctx);
-      }
-      if (isBack(ctx)) {
-        clearAwaitingTargetLink(ctx);
-        if (ctx.session) {
-          delete ctx.session.target_link;
-          delete ctx.session.raw_target_link;
-        }
-        await promptForStep(ctx, Step.TARGET_URL);
-        ctx.wizard.selectStep(Step.TARGET_URL);
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const n = parseNumber(getMessageText(ctx));
+    const evt = ctx.wizard.state.offer.event_type;
+    const min = minRates[evt]?.base ?? 0;
+    if (n == null || n < min) { await ctx.reply(`Введите корректную сумму (не ниже ${min}).`); return; }
+    ctx.wizard.state.offer.base_rate = n;
+    await promptPremiumRate(ctx);
+    return ctx.wizard.selectStep(Step.PREMIUM_RATE);
+  },
+  async (ctx) => {
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const n = parseNumber(getMessageText(ctx));
+    const base = ctx.wizard.state.offer.base_rate ?? 0;
+    const evt = ctx.wizard.state.offer.event_type;
+    const minPrem = minRates[evt]?.premium ?? base;
+    if (n == null || n < base || n < minPrem) {
+      await ctx.reply(`Число некорректно. Премиум-ставка не может быть ниже базовой (${base}) и порога (${minPrem}).`);
+      return;
+    }
+    ctx.wizard.state.offer.premium_rate = n;
+    await promptCapsTotal(ctx);
+    return ctx.wizard.selectStep(Step.CAPS_TOTAL);
+  },
+  async (ctx) => {
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const n = parseIntNonNegative(getMessageText(ctx));
+    if (n == null) { await ctx.reply('Введите целое число (0 — без ограничений).'); return; }
+    ctx.wizard.state.offer.caps_total = n === 0 ? null : n;
+    await promptGeoTargeting(ctx);
+    return ctx.wizard.selectStep(Step.GEO_TARGETING);
+  },
+  async (ctx) => {
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const raw = (getMessageText(ctx) || '').trim();
+    if (!raw || raw === '0' || /^без\s*огранич/i.test(raw)) {
+      ctx.wizard.state.offer.geo_mode = 'any';
+      ctx.wizard.state.offer.geo_input = null;
+      delete ctx.wizard.state.offer.geo_list;
+    } else {
+      try {
+        const parsed = parseGeoInput(raw);
+        ctx.wizard.state.offer.geo_mode = 'whitelist';
+        ctx.wizard.state.offer.geo_input = raw;
+        ctx.wizard.state.offer.geo_list = parsed;
+      } catch (e) {
+        await ctx.reply(`Не получилось разобрать гео. ${e?.message || ''} Попробуйте ещё раз.`);
         return;
       }
     }
-
-    if (!ctx.callbackQuery?.data) {
-      return;
-    }
-
-    await ctx.answerCbQuery();
-
-    if (ctx.callbackQuery.data === 'nav:back') {
-      await ctx.editMessageReplyMarkup();
-      ctx.wizard.selectStep(Step.TARGET_URL);
-      clearAwaitingTargetLink(ctx);
-      if (ctx.session) {
-        delete ctx.session.target_link;
-        delete ctx.session.raw_target_link;
-      }
-      await promptForStep(ctx, Step.TARGET_URL);
-      return;
-    }
-
-    if (!ctx.callbackQuery.data.startsWith('event:')) {
-      return;
-    }
-
-    const eventType = ctx.callbackQuery.data.split(':')[1];
-    const compatibilityError = ensureEventCompatibility(ctx.wizard.state.offer.target_meta, eventType);
-    if (compatibilityError) {
-      await ctx.reply(`${compatibilityError} Выберите другой тип.`);
-      return;
-    }
-
-    ctx.wizard.state.offer.action_type = eventType;
-    ctx.wizard.state.offer.event_type = eventType;
-    await ctx.editMessageReplyMarkup();
-    await promptForStep(ctx, Step.BASE_BID);
-    return ctx.wizard.next();
+    await promptOfferName(ctx);
+    return ctx.wizard.selectStep(Step.OFFER_NAME);
   },
   async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      await promptForStep(ctx, Step.EVENT_TYPE);
-      ctx.wizard.selectStep(Step.EVENT_TYPE);
-      return;
-    }
-
-    const value = parseNumber(getMessageText(ctx));
-    const actionType = ctx.wizard.state.offer.action_type;
-    const minBase = Math.max(5, minRates[actionType]?.base ?? 0);
-    if (value === null || value < minBase) {
-      await ctx.reply(`Нужно число не ниже ${minBase}. Попробуйте ещё раз.`);
-      return;
-    }
-
-    ctx.wizard.state.offer.base_bid = value;
-    ctx.wizard.state.offer.base_rate = value;
-    const minPremium = Math.max(value, 10, minRates[actionType]?.premium ?? 0);
-    ctx.wizard.state.offer.minPremium = minPremium;
-    await promptForStep(ctx, Step.PREMIUM_BID);
-    return ctx.wizard.next();
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    const name = (getMessageText(ctx) || '').trim();
+    if (!name) { await ctx.reply('Пустое название — пришлите непустую строку.'); return; }
+    ctx.wizard.state.offer.title = name;
+    ctx.wizard.state.offer.name = name;
+    await promptOfferSlug(ctx);
+    return ctx.wizard.selectStep(Step.OFFER_SLUG);
   },
   async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      await promptForStep(ctx, Step.BASE_BID);
-      ctx.wizard.selectStep(Step.BASE_BID);
-      return;
-    }
-
-    const value = parseNumber(getMessageText(ctx));
-    const { minPremium } = ctx.wizard.state.offer;
-    if (value === null || value < minPremium) {
-      await ctx.reply(`Нужно число не ниже ${minPremium}. Попробуйте ещё раз.`);
-      return;
-    }
-
-    ctx.wizard.state.offer.premium_bid = value;
-    ctx.wizard.state.offer.premium_rate = value;
-    await promptForStep(ctx, Step.TOTAL_CAP);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      await promptForStep(ctx, Step.PREMIUM_BID);
-      ctx.wizard.selectStep(Step.PREMIUM_BID);
-      return;
-    }
-
-    const text = getMessageText(ctx);
-    if (text === undefined || text === null || text === '') {
-      await ctx.reply('Введите целое число (0 = без ограничений).');
-      return;
-    }
-
-    const num = Number(text);
-    if (!Number.isInteger(num) || num < 0) {
-      await ctx.reply('Введите целое число не ниже 0.');
-      return;
-    }
-
-    ctx.wizard.state.offer.total_cap = num;
-    ctx.wizard.state.offer.caps_total = num;
-    ctx.wizard.state.offer.cap_window = 0;
-    ctx.wizard.state.offer.time_targeting = null;
-
-    const targetMeta = ctx.wizard.state.offer.target_meta;
-    const rawTitle =
-      targetMeta?.username ||
-      targetMeta?.title ||
-      autoTitleFromLink(ctx.wizard.state.offer.target_link);
-    const autoTitle = rawTitle ? String(rawTitle).trim() || 'Offer' : 'Offer';
-    ctx.wizard.state.offer.title = autoTitle;
-    ctx.wizard.state.offer.name = autoTitle;
-
-    const baseSlug = autoSlugFromTitle(autoTitle);
-    const uniqueSlug = await ensureUniqueSlug(baseSlug);
-    ctx.wizard.state.offer.slug = uniqueSlug;
-
-    const summary = buildSummary(ctx.wizard.state.offer);
-    await ctx.replyWithHTML(
-      `Проверьте данные:\n${summary}\n\nОтправить оффер?`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('✅ Подтвердить', 'confirm:create')],
-        [Markup.button.callback('↩️ Назад', 'confirm:back')],
-        [Markup.button.callback('❌ Отмена', 'confirm:cancel')],
-      ])
-    );
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (!ctx.callbackQuery?.data) {
-      if (ctx.message) {
-        if (isCancel(ctx)) {
-          return cancelWizard(ctx);
-        }
-        if (isBack(ctx)) {
-          ctx.wizard.selectStep(Step.TOTAL_CAP);
-          await promptForStep(ctx, Step.TOTAL_CAP);
-        }
-      }
-      return;
-    }
-
-    await ctx.answerCbQuery();
-
-    if (ctx.callbackQuery.data === 'confirm:cancel') {
-      await ctx.editMessageText('Создание оффера отменено.');
-      clearAwaitingTargetLink(ctx);
-      if (ctx.session) {
-        delete ctx.session.target_link;
-        delete ctx.session.raw_target_link;
-      }
-      return ctx.scene.leave();
-    }
-
-    if (ctx.callbackQuery.data === 'confirm:back') {
-      await ctx.editMessageText('Вернёмся и поправим данные.');
-      ctx.wizard.selectStep(Step.TOTAL_CAP);
-      await promptForStep(ctx, Step.TOTAL_CAP);
-      return;
-    }
-
-    if (ctx.callbackQuery.data !== 'confirm:create') {
-      return;
-    }
-
-    const offer = ctx.wizard.state.offer;
+    if (isCancel(ctx)) return cancelWizard(ctx);
+    let candidate = (getMessageText(ctx) || '').trim();
+    if (candidate === '-' || candidate === '—') candidate = ctx.wizard.state.autoSlug;
+    candidate = slugify(candidate);
+    if (!candidate) { await ctx.reply('Slug пуст или некорректен. Пришлите другой.'); return; }
+    const unique = await ensureUniqueSlug(candidate);
+    ctx.wizard.state.offer.slug = unique;
+    const offer = { ...ctx.wizard.state.offer, created_by_tg: ctx.from?.id ?? null };
+    let offerId;
     try {
-      const { id: offerId, trackingUrl } = await insertOffer(offer, ctx.wizard.state.audit);
-      const notificationText = `🟢 Кампания #${offerId} активна. CPA ссылка: ${trackingUrl}.`;
-      await ctx.editMessageText(notificationText);
-      if (ctx.from?.id) {
-        await notifyChat(ctx.telegram, ctx.from.id, notificationText);
-      }
-      const operatorChatId = (process.env.OPERATOR_TG_ID || '').trim();
-      if (operatorChatId) {
-        await notifyChat(ctx.telegram, operatorChatId, notificationText);
-      }
-      await logTrackingLink(offerId, offer.name, trackingUrl);
-    } catch (error) {
-      console.error(`${logPrefix} insert error`, error);
-      await ctx.editMessageText('Не удалось сохранить оффер: ' + (error.message || 'ошибка БД'));
+      offerId = await createOfferReturningId(offer);
+      await insertOfferAuditLog?.(offerId, 'created_by_wizard', { tg_id: ctx.from?.id }).catch(() => {});
+    } catch (e) {
+      console.error(`${logPrefix} create offer failed`, e);
+      await ctx.reply('❌ Не удалось создать оффер. Попробуйте позже.');
+      return cancelWizard(ctx);
     }
-    clearAwaitingTargetLink(ctx);
-    if (ctx.session) {
-      delete ctx.session.target_link;
-      delete ctx.session.raw_target_link;
-    }
+    await finishAndSend(ctx, offerId);
     return ctx.scene.leave();
   }
 );
 
-adsWizard.command('cancel', async (ctx) => cancelWizard(ctx));
-adsWizard.command('back', async (ctx) => {
-  await ctx.reply('Используйте кнопку или напишите "Назад" в рамках шага.');
-});
-
-export default adsWizard;
+export default wizard;
