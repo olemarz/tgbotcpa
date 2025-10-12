@@ -88,9 +88,9 @@ export function createLinkCaptureMiddleware() {
       return next();
     }
 
-    const mode = ctx.session?.mode;
-    const awaiting = ctx.session?.awaiting;
-    if (!(mode === 'offer:create' && awaiting === 'target_link')) {
+    const session = ctx.session ?? {};
+    const expecting = session.mode === 'offer:create' && session.awaiting === 'target_link';
+    if (!expecting) {
       return next();
     }
 
