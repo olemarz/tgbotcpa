@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import { randomBytes } from 'node:crypto';
 import geoip from 'geoip-lite';
 import requestIp from 'request-ip';
 
@@ -7,6 +6,7 @@ import { config } from '../config.js';
 import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { isAllowedByGeo } from '../utils/geo.js';
+import { buildStartDeepLink } from '../utils/tracking-link.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -18,11 +18,6 @@ interface OfferGeoRow {
 
 function isUUID(value: string): boolean {
   return UUID_REGEXP.test(value);
-}
-
-function generateStartToken(): string {
-  const length = 6 + Math.floor(Math.random() * 7);
-  return randomBytes(length).toString('base64url').slice(0, length);
 }
 
 function normalizeIp(value: string | null | undefined): string | null {
@@ -94,9 +89,16 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
   const geoList = offer?.geo_list ?? null;
 
   const uidParam = req.query?.uid ?? req.query?.sub;
+  const sourceParam = req.query?.source;
+  const sub1Param = req.query?.sub1;
+  const sub2Param = req.query?.sub2;
   const clickIdParam = req.query?.click_id ?? req.query?.clickId;
+
   const uid = uidParam !== undefined ? String(uidParam) : undefined;
-  const clickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
+  const source = sourceParam !== undefined ? String(sourceParam) : undefined;
+  const sub1 = sub1Param !== undefined ? String(sub1Param) : undefined;
+  const sub2 = sub2Param !== undefined ? String(sub2Param) : undefined;
+  const externalClickId = clickIdParam !== undefined ? String(clickIdParam) : undefined;
 
   const ipRaw = requestIp.getClientIp(req);
   const ip = normalizeIp(ipRaw);
@@ -115,14 +117,26 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const startToken = generateStartToken();
+  const startToken = uuid();
+  const clickRowId = uuid();
   const ua = req.get('user-agent') || null;
 
   try {
     await query(
-      `INSERT INTO clicks (id, offer_id, uid, click_id, start_token, ip, ua)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [uuid(), offerId, uid ?? null, clickId ?? null, startToken, ip ?? null, ua],
+      `INSERT INTO clicks (id, offer_id, uid, click_id, source, sub1, sub2, start_token, ip, ua)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        clickRowId,
+        offerId,
+        uid ?? null,
+        externalClickId ?? null,
+        source ?? null,
+        sub1 ?? null,
+        sub2 ?? null,
+        startToken,
+        ip ?? null,
+        ua,
+      ],
     );
   } catch (error: any) {
     if (error?.code === '23505') {
@@ -137,15 +151,15 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
   console.log('click captured', {
     offer_id: offerId,
     uid,
-    click_id: clickId,
+    source,
+    sub1,
+    sub2,
+    click_id: externalClickId,
     start_token: startToken,
     country,
   });
 
-  const useStartApp = String(process.env.USE_STARTAPP ?? 'true').toLowerCase() === 'true';
-  const link = useStartApp
-    ? `https://t.me/${botUsername}?startapp=${encodeURIComponent(startToken)}`
-    : `https://t.me/${botUsername}?start=${encodeURIComponent(startToken)}`;
+  const link = buildStartDeepLink({ botUsername, token: startToken });
 
   return res.redirect(link);
 }

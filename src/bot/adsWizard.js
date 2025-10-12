@@ -232,9 +232,14 @@ async function createOfferReturningId(offer) {
   return res.rows[0].id;
 }
 async function finishAndSend(ctx, offerId) {
+  const baseUrl = (config.baseUrl || process.env.BASE_URL || '').replace(/\/+$/, '');
   let trackingUrl;
-  try { trackingUrl = await buildTrackingUrl(offerId); }
-  catch { trackingUrl = `${config.BASE_URL.replace(/\/+$/,'')}/click/${offerId}`; }
+  try {
+    trackingUrl = buildTrackingUrl({ baseUrl, offerId });
+  } catch (error) {
+    console.error(`${logPrefix} failed to build tracking url`, { offerId, error: error?.message });
+    trackingUrl = baseUrl ? `${baseUrl}/click/${offerId}` : `/click/${offerId}`;
+  }
   await logTrackingLink(offerId, ctx.wizard.state.offer?.title, trackingUrl);
   await ctx.reply(
     ['✅ Оффер создан!', `ID: <code>${offerId}</code>`, `Ссылка для трафика: ${trackingUrl}`].join('\n'),
