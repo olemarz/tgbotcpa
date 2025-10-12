@@ -29,7 +29,7 @@ describe('link capture middleware', () => {
 
     let nextCalls = 0;
     const sessionA = {};
-    await middleware({ message: baseMessage, session: sessionA }, async () => {
+    await middleware({ updateType: 'message', message: baseMessage, session: sessionA }, async () => {
       nextCalls += 1;
     });
     assert.equal(nextCalls, 1);
@@ -39,6 +39,7 @@ describe('link capture middleware', () => {
     const sessionB = { mode: 'offer:create', awaiting: 'target_link' };
     await middleware(
       {
+        updateType: 'message',
         message: {
           text: '/ads https://t.me/example_channel',
           entities: [
@@ -63,6 +64,7 @@ describe('link capture middleware', () => {
     const sessionC = { mode: 'offer:create', awaiting: 'target_link' };
     await middleware(
       {
+        updateType: 'message',
         message: baseMessage,
         session: sessionC,
         reply: async () => {},
@@ -84,6 +86,7 @@ describe('link capture middleware', () => {
     let nextCalls = 0;
     await middleware(
       {
+        updateType: 'message',
         message: {
           text: 'https://t.me/example_channel',
           entities: [
@@ -118,25 +121,26 @@ describe('/ads command guard', () => {
     const middleware = createLinkCaptureMiddleware();
 
     const replies = [];
-      const ctx = {
-        message: {
-          text: '/ads https://t.me/example_channel',
-          entities: [
-            { type: 'bot_command', offset: 0, length: 4 },
-            {
-              type: 'url',
-              offset: 5,
-              length: 'https://t.me/example_channel'.length,
-            },
-          ],
-        },
-        from: { id: 501, language_code: 'ru' },
-        chat: { id: 501, type: 'private' },
-        reply: async (...args) => {
-          replies.push(args);
-        },
-        session: { mode: 'offer:create', awaiting: 'target_link' },
-      };
+    const ctx = {
+      updateType: 'message',
+      message: {
+        text: '/ads https://t.me/example_channel',
+        entities: [
+          { type: 'bot_command', offset: 0, length: 4 },
+          {
+            type: 'url',
+            offset: 5,
+            length: 'https://t.me/example_channel'.length,
+          },
+        ],
+      },
+      from: { id: 501, language_code: 'ru' },
+      chat: { id: 501, type: 'private' },
+      reply: async (...args) => {
+        replies.push(args);
+      },
+      session: { mode: 'offer:create', awaiting: 'target_link' },
+    };
 
     await middleware(ctx, async () => {
       await handleAdsUserCommand(ctx);
