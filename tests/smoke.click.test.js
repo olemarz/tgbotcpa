@@ -31,7 +31,7 @@ if (!databaseUrl || isPgMem) {
       const offerId = uuid();
       const response = await request(app)
         .get(`/click/${offerId}`)
-        .query({ uid: 'u1', click_id: 'c1' })
+        .query({ uid: 'u1', source: 'smoke', sub1: 'a', sub2: 'b' })
         .set('User-Agent', 'smoke-test');
 
       assert.equal(response.status, 302, 'should redirect');
@@ -43,9 +43,7 @@ if (!databaseUrl || isPgMem) {
       const startToken = rows[0].start_token;
       assert.ok(startToken && startToken.length >= 6, 'start_token must be generated');
 
-      const useStartApp = String(process.env.USE_STARTAPP ?? 'true').toLowerCase() === 'true';
-      const param = useStartApp ? 'startapp' : 'start';
-      const expected = `https://t.me/${process.env.BOT_USERNAME}?${param}=${encodeURIComponent(startToken)}`;
+      const expected = `https://t.me/${process.env.BOT_USERNAME}?start=${encodeURIComponent(startToken)}`;
       assert.equal(location, expected, 'redirect URL must match generated start token');
     });
   });

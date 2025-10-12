@@ -1,29 +1,47 @@
 import 'dotenv/config';
-import express from 'express';
-import path from 'path';
 import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
 import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
-import { waRouter } from './wa.js';
-import { cpaRouter } from './cpa.js';
+import { createApp as createCoreApp } from './app.js';
 
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const WEBHOOK_PATH_DEFAULT = '/bot/webhook';
+const WEBHOOK_SECRET_DEFAULT = 'prod-secret';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.resolve(__dirname, '../../public');
-app.use(express.static(publicDir));
-app.use('/api/wa', waRouter);
-app.use('/api/cpa', cpaRouter);
+export async function createApp() {
+  const app = createCoreApp();
 
-const WH_PATH = process.env.WEBHOOK_PATH || '/bot/webhook';
-const WH_SECRET = process.env.WEBHOOK_SECRET || 'prod-secret';
-app.use(WH_PATH, bot.webhookCallback(WH_PATH, { secretToken: WH_SECRET }));
+  const webhookPath = (process.env.WEBHOOK_PATH || WEBHOOK_PATH_DEFAULT).trim() || WEBHOOK_PATH_DEFAULT;
+  const webhookSecret = (process.env.WEBHOOK_SECRET || WEBHOOK_SECRET_DEFAULT).trim() || WEBHOOK_SECRET_DEFAULT;
 
-console.log(`[App version] commit=${COMMIT} branch=${BRANCH} built_at=${BUILT_AT}`);
+  app.use(webhookPath, bot.webhookCallback(webhookPath, { secretToken: webhookSecret }));
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, version: { commit: COMMIT, branch: BRANCH, built_at: BUILT_AT } });
-});
-app.listen(process.env.PORT || 3000, () => console.log('[api] Listening on :' + (process.env.PORT || 3000)));
+  if (app._router?.stack) {
+    app._router.stack = app._router.stack.filter((layer) => layer.route?.path !== '/health');
+  }
+
+  app.get('/health', (_req, res) => {
+    res.json({ ok: true, version: { commit: COMMIT, branch: BRANCH, built_at: BUILT_AT } });
+  });
+
+  console.log(`[App version] commit=${COMMIT} branch=${BRANCH} built_at=${BUILT_AT}`);
+
+  return app;
+}
+
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  const portRaw = process.env.PORT;
+  const port = Number.parseInt(portRaw ?? '', 10);
+  const listenPort = Number.isFinite(port) && port > 0 ? port : 3000;
+
+  const startServer = async () => {
+    const app = await createApp();
+    app.listen(listenPort, () => console.log(`[api] Listening on :${listenPort}`));
+  };
+
+  startServer().catch((error) => {
+    console.error('[api] Failed to start server', error);
+    process.exitCode = 1;
+  });
+}
