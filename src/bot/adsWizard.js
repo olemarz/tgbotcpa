@@ -146,6 +146,26 @@ function formatRate(value) {
   return `${value} ₽`;
 }
 
+function markAwaitingTargetLink(ctx) {
+  if (!ctx.session) {
+    ctx.session = {};
+  }
+  ctx.session.mode = 'offer:create';
+  ctx.session.awaiting = 'target_link';
+}
+
+function clearAwaitingTargetLink(ctx) {
+  if (!ctx.session) {
+    return;
+  }
+  if (ctx.session.mode === 'offer:create') {
+    delete ctx.session.mode;
+  }
+  if (ctx.session.awaiting === 'target_link') {
+    delete ctx.session.awaiting;
+  }
+}
+
 function ensureMinRate(eventType, value, tier) {
   const min = minRates[eventType]?.[tier] ?? 0;
   return value >= min;
@@ -168,12 +188,14 @@ function isBack(ctx) {
 }
 
 async function cancelWizard(ctx, message = 'Мастер отменён.') {
+  clearAwaitingTargetLink(ctx);
   await ctx.reply(message);
   return ctx.scene.leave();
 }
 
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
+  markAwaitingTargetLink(ctx);
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Пришлите ссылку на канал/группу/бота в формате https://t.me/...\n` +
       'Команды: [Отмена] — выйти из мастера.'
@@ -614,6 +636,7 @@ const adsWizard = new Scenes.WizardScene(
     ctx.wizard.state.offer.target_url = targetMeta.normalizedUrl;
     ctx.wizard.state.offer.target_meta = targetMeta;
     ctx.wizard.state.offer.chat_ref = buildChatRef(targetMeta);
+    clearAwaitingTargetLink(ctx);
 
     await promptForStep(ctx, Step.EVENT_TYPE);
     return ctx.wizard.next();
