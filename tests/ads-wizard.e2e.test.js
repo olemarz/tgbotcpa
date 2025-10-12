@@ -2,7 +2,7 @@ import './setup-env.cjs';
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 
-import adsWizard from '../src/bot/adsWizard.js';
+import adsWizard, { initializeAdsWizard } from '../src/bot/adsWizard.js';
 import { EVENT_TYPES } from '../src/bot/constants.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { query } from '../src/db/index.js';
@@ -73,41 +73,52 @@ describe('ads wizard flow', () => {
     const ctx = createWizardContext();
     const steps = adsWizard.steps;
 
+    let updateId = 1;
+    ctx.update = { update_id: updateId++, message: { text: '/ads' } };
+    await initializeAdsWizard(ctx);
     await steps[0](ctx);
     const prompts = [ctx.replies.at(-1)];
 
     ctx.message = { text: 'https://t.me/example_channel' };
-    await steps[1](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[0](ctx);
     prompts.push(ctx.replies.at(-1));
     ctx.message = undefined;
 
     ctx.callbackQuery = { data: `event:${EVENT_TYPES.join_group}` };
-    await steps[2](ctx);
+    ctx.update = { update_id: updateId++, callback_query: ctx.callbackQuery };
+    await steps[1](ctx);
     prompts.push(ctx.replies.at(-1));
     ctx.callbackQuery = undefined;
 
     ctx.message = { text: '20' };
-    await steps[3](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[2](ctx);
     prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '25' };
-    await steps[4](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[3](ctx);
     prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '100' };
-    await steps[5](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[4](ctx);
     prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '0' };
-    await steps[6](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[5](ctx);
     prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: 'Example Offer' };
-    await steps[7](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[6](ctx);
     prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '-' };
-    await steps[8](ctx);
+    ctx.update = { update_id: updateId++, message: ctx.message };
+    await steps[7](ctx);
 
     assert.equal(ctx.sceneLeft, true);
 

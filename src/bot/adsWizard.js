@@ -36,14 +36,14 @@ const CANCEL_KEYWORDS = new Set(['/cancel', 'отмена', '[отмена]', 'c
 const BACK_KEYWORDS = new Set(['/back', 'назад', '[назад]']);
 
 const Step = Object.freeze({
-  TARGET_URL: 1,
-  EVENT_TYPE: 2,
-  BASE_RATE: 3,
-  PREMIUM_RATE: 4,
-  CAPS_TOTAL: 5,
-  GEO_TARGETING: 6,
-  OFFER_NAME: 7,
-  OFFER_SLUG: 8,
+  TARGET_URL: 0,
+  EVENT_TYPE: 1,
+  BASE_RATE: 2,
+  PREMIUM_RATE: 3,
+  CAPS_TOTAL: 4,
+  GEO_TARGETING: 5,
+  OFFER_NAME: 6,
+  OFFER_SLUG: 7,
 });
 
 const INPUT_STEP_ORDER = Object.freeze([
@@ -148,7 +148,29 @@ function resetWizardState(ctx) {
   ctx.wizard.state = { offer: {} };
 }
 
+function markStepPrompted(ctx) {
+  const updateId = ctx.update?.update_id;
+  ctx.wizard.state.skipUpdate = updateId ?? true;
+}
+
+function shouldSkipCurrentUpdate(ctx) {
+  const skipMark = ctx.wizard?.state?.skipUpdate;
+  if (skipMark === undefined) {
+    return false;
+  }
+  const currentId = ctx.update?.update_id;
+  if (skipMark === true || (typeof skipMark === 'number' && skipMark === currentId)) {
+    delete ctx.wizard.state.skipUpdate;
+    return true;
+  }
+  if (typeof skipMark === 'number' && currentId !== undefined) {
+    delete ctx.wizard.state.skipUpdate;
+  }
+  return false;
+}
+
 async function goToStep(ctx, step) {
+  markStepPrompted(ctx);
   switch (step) {
     case Step.TARGET_URL:
       await promptTargetUrl(ctx);
@@ -294,17 +316,21 @@ async function finishAndSend(ctx, offerId) {
 
 export const adsWizardScene = new Scenes.WizardScene(
   'ads-wizard',
-  async (ctx) => { resetWizardState(ctx); await promptTargetUrl(ctx); return ctx.wizard.selectStep(Step.TARGET_URL); },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
     const text = getMessageText(ctx);
     const normalized = normalizeTelegramUrl(text || '');
-    if (!normalized) { await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.'); return; }
+    if (!normalized) {
+      await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.');
+      return;
+    }
     ctx.wizard.state.offer.target_url = normalized;
     return goToStep(ctx, Step.EVENT_TYPE);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
     const cb = ctx.callbackQuery?.data;
@@ -315,6 +341,7 @@ export const adsWizardScene = new Scenes.WizardScene(
     return goToStep(ctx, Step.BASE_RATE);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.EVENT_TYPE); return; }
     const n = parseNumber(getMessageText(ctx));
@@ -325,6 +352,7 @@ export const adsWizardScene = new Scenes.WizardScene(
     return goToStep(ctx, Step.PREMIUM_RATE);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.BASE_RATE); return; }
     const n = parseNumber(getMessageText(ctx));
@@ -339,6 +367,7 @@ export const adsWizardScene = new Scenes.WizardScene(
     return goToStep(ctx, Step.CAPS_TOTAL);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.PREMIUM_RATE); return; }
     const n = parseIntNonNegative(getMessageText(ctx));
@@ -347,6 +376,7 @@ export const adsWizardScene = new Scenes.WizardScene(
     return goToStep(ctx, Step.GEO_TARGETING);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.CAPS_TOTAL); return; }
     const raw = (getMessageText(ctx) || '').trim();
@@ -368,6 +398,7 @@ export const adsWizardScene = new Scenes.WizardScene(
     return goToStep(ctx, Step.OFFER_NAME);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.GEO_TARGETING); return; }
     const name = (getMessageText(ctx) || '').trim();
@@ -377,6 +408,7 @@ export const adsWizardScene = new Scenes.WizardScene(
     return goToStep(ctx, Step.OFFER_SLUG);
   },
   async (ctx) => {
+    if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
     if (isBack(ctx)) { await goToStep(ctx, Step.OFFER_NAME); return; }
     let candidate = (getMessageText(ctx) || '').trim();
@@ -399,6 +431,13 @@ export const adsWizardScene = new Scenes.WizardScene(
     return ctx.scene.leave();
   }
 );
+
+export async function initializeAdsWizard(ctx) {
+  resetWizardState(ctx);
+  await goToStep(ctx, Step.TARGET_URL);
+}
+
+adsWizardScene.enter(initializeAdsWizard);
 
 export const startAdsWizard = async (ctx) => {
   if (ctx.scene?.current?.id === 'ads-wizard') {
