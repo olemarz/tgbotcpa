@@ -1,41 +1,30 @@
 name: CI
-
 on:
-  pull_request:
-  push:
-    branches:
-      - '**'
-
+  push: { branches: [ main ] }
+  pull_request: {}
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      BOT_TOKEN: test-bot-token
-      BOT_USERNAME: trackingusers_bot
-      BASE_URL: https://example.com
-      WEBHOOK_PATH: /bot/webhook
-      DEBUG_TOKEN: debug-token
-      CPA_PB_SECRET: test-secret
-      CPA_PB_URL: ''
-      CPA_POSTBACK_URL: ''
     services:
-      pg:
+      postgres:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
-        ports:
-          - '5432:5432'
+          POSTGRES_DB: app
+        ports: ['5432:5432']
         options: >-
-          --health-cmd="pg_isready -U postgres" --health-interval=5s --health-timeout=5s --health-retries=20
+          --health-cmd="pg_isready -U postgres" --health-interval=10s
+          --health-timeout=5s --health-retries=5
+    env:
+      NODE_ENV: test
+      BOT_TOKEN: "TEST_TOKEN"
+      BASE_URL: "http://localhost:3000"
+      WEBHOOK_PATH: "/bot/webhook"
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/app"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+        with: { node-version: 20 }
       - run: npm ci
-      - name: Doctor (soft)
-        run: NODE_ENV=ci node scripts/doctor.js || true
-      - name: Prepare DB URL
-        run: echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres" >> $GITHUB_ENV
-      - run: SEED=1 npm run migrate
+      - run: npm run migrate
       - run: npm test

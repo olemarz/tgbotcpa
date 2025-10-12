@@ -20,6 +20,11 @@ const eventLabels = {
   [EVENT_TYPES.start_bot]: 'Старт бота / мини-аппа',
 };
 
+export const GEO = Object.freeze({
+  ANY: 'any',
+  WHITELIST: 'whitelist',
+});
+
 const minRates = config.MIN_RATES || {};
 const allowedTelegramHosts = new Set(['t.me', 'telegram.me', 'telegram.dog']);
 
@@ -227,9 +232,14 @@ async function createOfferReturningId(offer) {
   return res.rows[0].id;
 }
 async function finishAndSend(ctx, offerId) {
+  const baseUrl = (config.baseUrl || process.env.BASE_URL || '').replace(/\/+$/, '');
   let trackingUrl;
-  try { trackingUrl = await buildTrackingUrl(offerId); }
-  catch { trackingUrl = `${config.BASE_URL.replace(/\/+$/,'')}/click/${offerId}`; }
+  try {
+    trackingUrl = buildTrackingUrl({ baseUrl, offerId });
+  } catch (error) {
+    console.error(`${logPrefix} failed to build tracking url`, { offerId, error: error?.message });
+    trackingUrl = baseUrl ? `${baseUrl}/click/${offerId}` : `/click/${offerId}`;
+  }
   await logTrackingLink(offerId, ctx.wizard.state.offer?.title, trackingUrl);
   await ctx.reply(
     ['✅ Оффер создан!', `ID: <code>${offerId}</code>`, `Ссылка для трафика: ${trackingUrl}`].join('\n'),
@@ -242,8 +252,8 @@ async function finishAndSend(ctx, offerId) {
   }
 }
 
-const wizard = new Scenes.WizardScene(
-  'adsWizard',
+export const adsWizardScene = new Scenes.WizardScene(
+  'ads-wizard',
   async (ctx) => { ctx.wizard.state.offer ??= {}; await promptTargetUrl(ctx); return ctx.wizard.selectStep(Step.TARGET_URL); },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
@@ -299,13 +309,13 @@ const wizard = new Scenes.WizardScene(
     if (isCancel(ctx)) return cancelWizard(ctx);
     const raw = (getMessageText(ctx) || '').trim();
     if (!raw || raw === '0' || /^без\s*огранич/i.test(raw)) {
-      ctx.wizard.state.offer.geo_mode = 'any';
+      ctx.wizard.state.offer.geo_mode = GEO.ANY;
       ctx.wizard.state.offer.geo_input = null;
       delete ctx.wizard.state.offer.geo_list;
     } else {
       try {
         const parsed = parseGeoInput(raw);
-        ctx.wizard.state.offer.geo_mode = 'whitelist';
+        ctx.wizard.state.offer.geo_mode = GEO.WHITELIST;
         ctx.wizard.state.offer.geo_input = raw;
         ctx.wizard.state.offer.geo_list = parsed;
       } catch (e) {
@@ -348,4 +358,6 @@ const wizard = new Scenes.WizardScene(
   }
 );
 
-export default wizard;
+export const startAdsWizard = (ctx) => ctx.scene.enter('ads-wizard');
+
+export default adsWizardScene;
