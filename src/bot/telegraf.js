@@ -211,7 +211,13 @@ bot.command('help', async (ctx) => {
 });
 
 // 1) Командные хендлеры должны идти ПЕРЕД общими ловцами текста
-bot.command(['ads', 'add'], startAdsWizard);
+if (process.env.USE_NEW_ADS_WIZARD === 'true') {
+  // Регистрируем ТОЛЬКО новый мастер
+  bot.command(['ads', 'add'], startAdsWizard);
+} else {
+  // На всякий случай — бросаем ошибку, чтобы старый не включился незаметно
+  throw new Error('Old /ads flow disabled. Set USE_NEW_ADS_WIZARD=true');
+}
 
 // Рекомендуется иметь /cancel
 bot.command('cancel', async (ctx) => {
