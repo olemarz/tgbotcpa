@@ -37,5 +37,5 @@ jobs:
         run: NODE_ENV=ci node scripts/doctor.js || true
       - name: Prepare DB URL
         run: echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres" >> $GITHUB_ENV
-      - run: npm run migrate
+      - run: SEED=1 npm run migrate
       - run: npm test
