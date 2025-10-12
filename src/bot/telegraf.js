@@ -1,7 +1,6 @@
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { Telegraf, Scenes } from 'telegraf';
-import session from 'telegraf/session';
+import { Telegraf, Scenes, session } from 'telegraf';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
@@ -32,8 +31,10 @@ export function logUpdate(ctx, tag = 'update') {
   });
 }
 
-// session — строго ДО stage
+// сцены
+const stage = new Scenes.Stage([adsWizardScene]);
 bot.use(session());
+bot.use(stage.middleware());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 0) Любая команда — сперва очищаем "ожидание ссылки", чтобы визард не висел
@@ -50,10 +51,6 @@ bot.use(async (ctx, next) => {
   return next();
 });
 // ─────────────────────────────────────────────────────────────────────────────
-
-// сцены
-const stage = new Scenes.Stage([adsWizardScene]);
-bot.use(stage.middleware());
 
 // ---- Команды ----
 
@@ -209,15 +206,6 @@ bot.command('help', async (ctx) => {
     'Все офферы открываются через кнопку (WebApp). Если ничего не произошло — отправьте /claim <токен> из вашей ссылки.',
   );
 });
-
-// 1) Командные хендлеры должны идти ПЕРЕД общими ловцами текста
-if (process.env.USE_NEW_ADS_WIZARD === 'true') {
-  // Регистрируем ТОЛЬКО новый мастер
-  bot.command(['ads', 'add'], startAdsWizard);
-} else {
-  // На всякий случай — бросаем ошибку, чтобы старый не включился незаметно
-  throw new Error('Old /ads flow disabled. Set USE_NEW_ADS_WIZARD=true');
-}
 
 // Рекомендуется иметь /cancel
 bot.command('cancel', async (ctx) => {
@@ -430,3 +418,11 @@ function safeStop(reason) {
 
 process.once('SIGINT', () => safeStop('SIGINT'));
 process.once('SIGTERM', () => safeStop('SIGTERM'));
+
+console.log('[BOOT] adsWizard wired as /ads at', new Date().toISOString());
+
+if (String(startAdsWizard) === 'undefined' || typeof startAdsWizard !== 'function') {
+  throw new Error('adsWizard not exported correctly');
+}
+
+bot.command(['ads', 'add'], startAdsWizard);
