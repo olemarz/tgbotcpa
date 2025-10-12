@@ -84,12 +84,16 @@ export function createLinkCaptureMiddleware() {
     }
 
     const text = ctx.message?.text ?? '';
-    if (text.startsWith('/')) {
+
+    // Команды никогда не перехватываем
+    if (typeof text === 'string' && text.trimStart().startsWith('/')) {
       return next();
     }
 
+    // Ловец активен ТОЛЬКО в шаге визарда "введите ссылку"
     const session = ctx.session ?? {};
-    const expecting = session.mode === 'offer:create' && session.awaiting === 'target_link';
+    const expecting =
+      session.mode === 'offer:create' && session.awaiting === 'target_link';
     if (!expecting) {
       return next();
     }
@@ -120,7 +124,7 @@ export function createLinkCaptureMiddleware() {
       if (typeof ctx.reply === 'function') {
         await ctx.reply('Нужно прислать ссылку вида https://t.me/...');
       }
-      return next();
+      return;
     }
 
     if (!ctx.session) {
