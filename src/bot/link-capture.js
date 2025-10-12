@@ -83,42 +83,27 @@ export function createLinkCaptureMiddleware() {
       return next();
     }
 
-    const text = ctx.message?.text ?? '';
-
-    // Команды никогда не перехватываем
-    if (typeof text === 'string' && text.trimStart().startsWith('/')) {
+    if (ctx.updateType !== 'message' || !ctx.message?.text) {
       return next();
     }
 
-    // Ловец активен ТОЛЬКО в шаге визарда "введите ссылку"
-    const session = ctx.session ?? {};
-    const expecting =
-      session.mode === 'offer:create' && session.awaiting === 'target_link';
-    if (!expecting) {
+    const text = ctx.message.text;
+    if (typeof text !== 'string') {
       return next();
     }
 
-    const message = ctx?.update?.message ?? ctx?.message;
-    if (!message) {
+    if (text.trimStart().startsWith('/')) {
       return next();
     }
 
-    const normalizedText = getMessageText(message);
-    if (typeof normalizedText === 'string' && normalizedText.trimStart().startsWith('/')) {
+    const session = ctx.session || {};
+    if (session.awaiting !== 'target_link') {
       return next();
     }
 
-    const entities = getMessageEntities(message);
-    const hasUrlEntity = entities.some((entity) => entity?.type === 'url' || entity?.type === 'text_link');
-    if (!hasUrlEntity) {
-      return next();
-    }
+    console.log('link-capture active', { tg_id: ctx.from?.id, text });
 
-    const rawUrl = extractUrlFromMessage(message);
-    if (!rawUrl) {
-      return next();
-    }
-
+    const rawUrl = extractUrlFromMessage(ctx.message) || text.trim();
     const normalized = normalizeTelegramLink(rawUrl);
     if (!normalized) {
       if (typeof ctx.reply === 'function') {
@@ -133,6 +118,7 @@ export function createLinkCaptureMiddleware() {
 
     ctx.session.target_link = normalized;
     ctx.session.raw_target_link = rawUrl;
+    delete ctx.session.awaiting;
 
     return next();
   };
