@@ -1,7 +1,8 @@
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session } from 'telegraf';
-import adsWizard from './adsWizard.js';
+import { Telegraf, Scenes } from 'telegraf';
+import session from 'telegraf/session';
+import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
@@ -51,7 +52,7 @@ bot.use(async (ctx, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // сцены
-const stage = new Scenes.Stage([adsWizard]);
+const stage = new Scenes.Stage([adsWizardScene]);
 bot.use(stage.middleware());
 
 // ---- Команды ----
@@ -201,7 +202,7 @@ bot.command('help', async (ctx) => {
 });
 
 // 1) Командные хендлеры должны идти ПЕРЕД общими ловцами текста
-bot.command(['ads', 'add'], async (ctx) => ctx.scene.enter('adsWizard'));
+bot.command(['ads', 'add'], startAdsWizard);
 
 // Рекомендуется иметь /cancel
 bot.command('cancel', async (ctx) => {
