@@ -140,6 +140,42 @@ function normalizeTelegramUrl(raw) {
   } catch { return null; }
 }
 
+function resetWizardState(ctx) {
+  ctx.wizard.state = { offer: {} };
+}
+
+async function goToStep(ctx, step) {
+  switch (step) {
+    case Step.TARGET_URL:
+      await promptTargetUrl(ctx);
+      break;
+    case Step.EVENT_TYPE:
+      await promptEventType(ctx);
+      break;
+    case Step.BASE_RATE:
+      await promptBaseRate(ctx);
+      break;
+    case Step.PREMIUM_RATE:
+      await promptPremiumRate(ctx);
+      break;
+    case Step.CAPS_TOTAL:
+      await promptCapsTotal(ctx);
+      break;
+    case Step.GEO_TARGETING:
+      await promptGeoTargeting(ctx);
+      break;
+    case Step.OFFER_NAME:
+      await promptOfferName(ctx);
+      break;
+    case Step.OFFER_SLUG:
+      await promptOfferSlug(ctx);
+      break;
+    default:
+      break;
+  }
+  return ctx.wizard.selectStep(step);
+}
+
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
   await ctx.reply(
@@ -254,37 +290,39 @@ async function finishAndSend(ctx, offerId) {
 
 export const adsWizardScene = new Scenes.WizardScene(
   'ads-wizard',
-  async (ctx) => { ctx.wizard.state.offer ??= {}; await promptTargetUrl(ctx); return ctx.wizard.selectStep(Step.TARGET_URL); },
+  async (ctx) => { resetWizardState(ctx); await promptTargetUrl(ctx); return ctx.wizard.selectStep(Step.TARGET_URL); },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
     const text = getMessageText(ctx);
     const normalized = normalizeTelegramUrl(text || '');
     if (!normalized) { await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.'); return; }
     ctx.wizard.state.offer.target_url = normalized;
-    await promptEventType(ctx);
-    return ctx.wizard.selectStep(Step.EVENT_TYPE);
+    return goToStep(ctx, Step.EVENT_TYPE);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
     const cb = ctx.callbackQuery?.data;
+    if (cb === 'nav:back') { await ctx.answerCbQuery(); return goToStep(ctx, Step.TARGET_URL); }
     if (!cb?.startsWith?.('event:')) { await promptEventType(ctx); return; }
     ctx.wizard.state.offer.event_type = cb.slice('event:'.length);
     await ctx.answerCbQuery();
-    await promptBaseRate(ctx);
-    return ctx.wizard.selectStep(Step.BASE_RATE);
+    return goToStep(ctx, Step.BASE_RATE);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.EVENT_TYPE); return; }
     const n = parseNumber(getMessageText(ctx));
     const evt = ctx.wizard.state.offer.event_type;
     const min = minRates[evt]?.base ?? 0;
     if (n == null || n < min) { await ctx.reply(`Введите корректную сумму (не ниже ${min}).`); return; }
     ctx.wizard.state.offer.base_rate = n;
-    await promptPremiumRate(ctx);
-    return ctx.wizard.selectStep(Step.PREMIUM_RATE);
+    return goToStep(ctx, Step.PREMIUM_RATE);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.BASE_RATE); return; }
     const n = parseNumber(getMessageText(ctx));
     const base = ctx.wizard.state.offer.base_rate ?? 0;
     const evt = ctx.wizard.state.offer.event_type;
@@ -294,19 +332,19 @@ export const adsWizardScene = new Scenes.WizardScene(
       return;
     }
     ctx.wizard.state.offer.premium_rate = n;
-    await promptCapsTotal(ctx);
-    return ctx.wizard.selectStep(Step.CAPS_TOTAL);
+    return goToStep(ctx, Step.CAPS_TOTAL);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.PREMIUM_RATE); return; }
     const n = parseIntNonNegative(getMessageText(ctx));
     if (n == null) { await ctx.reply('Введите целое число (0 — без ограничений).'); return; }
     ctx.wizard.state.offer.caps_total = n === 0 ? null : n;
-    await promptGeoTargeting(ctx);
-    return ctx.wizard.selectStep(Step.GEO_TARGETING);
+    return goToStep(ctx, Step.GEO_TARGETING);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.CAPS_TOTAL); return; }
     const raw = (getMessageText(ctx) || '').trim();
     if (!raw || raw === '0' || /^без\s*огранич/i.test(raw)) {
       ctx.wizard.state.offer.geo_mode = GEO.ANY;
@@ -323,20 +361,20 @@ export const adsWizardScene = new Scenes.WizardScene(
         return;
       }
     }
-    await promptOfferName(ctx);
-    return ctx.wizard.selectStep(Step.OFFER_NAME);
+    return goToStep(ctx, Step.OFFER_NAME);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.GEO_TARGETING); return; }
     const name = (getMessageText(ctx) || '').trim();
     if (!name) { await ctx.reply('Пустое название — пришлите непустую строку.'); return; }
     ctx.wizard.state.offer.title = name;
     ctx.wizard.state.offer.name = name;
-    await promptOfferSlug(ctx);
-    return ctx.wizard.selectStep(Step.OFFER_SLUG);
+    return goToStep(ctx, Step.OFFER_SLUG);
   },
   async (ctx) => {
     if (isCancel(ctx)) return cancelWizard(ctx);
+    if (isBack(ctx)) { await goToStep(ctx, Step.OFFER_NAME); return; }
     let candidate = (getMessageText(ctx) || '').trim();
     if (candidate === '-' || candidate === '—') candidate = ctx.wizard.state.autoSlug;
     candidate = slugify(candidate);
@@ -358,6 +396,16 @@ export const adsWizardScene = new Scenes.WizardScene(
   }
 );
 
-export const startAdsWizard = (ctx) => ctx.scene.enter('ads-wizard');
+export const startAdsWizard = async (ctx) => {
+  if (ctx.scene?.current?.id === 'ads-wizard') {
+    try {
+      return await ctx.scene.reenter();
+    } catch (error) {
+      console.error(`${logPrefix} failed to reenter wizard`, error?.message || error);
+      return ctx.reply('⚠️ Не удалось перезапустить мастер. Попробуйте ещё раз.');
+    }
+  }
+  return ctx.scene.enter('ads-wizard');
+};
 
 export default adsWizardScene;
