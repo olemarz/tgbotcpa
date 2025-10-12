@@ -87,12 +87,12 @@ export function createLinkCaptureMiddleware() {
       return next();
     }
 
-    const text = ctx.message.text;
-    if (typeof text !== 'string') {
+    const text = ctx.message.text.trim();
+    if (!text) {
       return next();
     }
 
-    if (text.trimStart().startsWith('/')) {
+    if (text.startsWith('/')) {
       return next();
     }
 
@@ -101,13 +101,13 @@ export function createLinkCaptureMiddleware() {
       return next();
     }
 
-    console.log('link-capture active', { tg_id: ctx.from?.id, text });
+    console.log('[link-capture] tg_id=%s text=%s', ctx.from?.id, text);
 
-    const rawUrl = extractUrlFromMessage(ctx.message) || text.trim();
+    const rawUrl = extractUrlFromMessage(ctx.message) || text;
     const normalized = normalizeTelegramLink(rawUrl);
     if (!normalized) {
       if (typeof ctx.reply === 'function') {
-        await ctx.reply('Нужно прислать ссылку вида https://t.me/...');
+        await ctx.reply('Нужна ссылка вида https://t.me/...');
       }
       return;
     }
@@ -116,8 +116,8 @@ export function createLinkCaptureMiddleware() {
       ctx.session = {};
     }
 
+    ctx.session.raw_target_link = text;
     ctx.session.target_link = normalized;
-    ctx.session.raw_target_link = rawUrl;
     delete ctx.session.awaiting;
 
     return next();
