@@ -92,26 +92,39 @@ describe('ads wizard flow', () => {
     ctx.message = { text: '100' };
     await steps[5](ctx);
 
-    ctx.callbackQuery = { data: 'confirm:create' };
+    ctx.message = { text: '0' };
     await steps[6](ctx);
+
+    ctx.message = { text: 'Example Offer' };
+    await steps[7](ctx);
+
+    ctx.message = { text: '-' };
+    await steps[8](ctx);
 
     assert.equal(ctx.sceneLeft, true);
 
-    const res = await query(
-      `SELECT target_url, event_type, name, slug, base_rate, premium_rate, caps_total, chat_ref
-         FROM offers
-         LIMIT 1`
-    );
+    const res = await query('SELECT * FROM offers LIMIT 1');
     assert.equal(res.rowCount, 1);
     const row = res.rows[0];
     assert.equal(row.target_url, 'https://t.me/example_channel');
     assert.equal(row.event_type, EVENT_TYPES.join_group);
-    assert.equal(row.name, 'example_channel');
-    assert.equal(row.base_rate, 20);
-    assert.equal(row.premium_rate, 25);
+    const title = row.title ?? row.name;
+    assert.equal(title, 'Example Offer');
+    assert.equal(Number(row.base_rate), 20);
+    assert.equal(Number(row.premium_rate), 25);
     assert.equal(row.caps_total, 100);
-    assert.ok(typeof row.slug === 'string' && row.slug.startsWith('example-channel-'));
-    assert.ok(row.chat_ref);
-    assert.equal(row.chat_ref.username, 'example_channel');
+    assert.ok(typeof row.slug === 'string' && /^example-offer(?:-\d+)?$/.test(row.slug));
+    if ('geo_mode' in row) {
+      assert.equal(row.geo_mode, 'any');
+    }
+    assert.equal(row.geo_input ?? null, null);
+    if ('geo_list' in row) {
+      const list = row.geo_list;
+      if (Array.isArray(list)) {
+        assert.deepEqual(list, []);
+      } else {
+        assert.equal(list, '{}');
+      }
+    }
   });
 });

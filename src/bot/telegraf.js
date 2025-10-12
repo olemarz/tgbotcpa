@@ -7,8 +7,7 @@ import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
-import { config } from '../config.js';
-import { handleAdsUserCommand, handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
+import { handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
 import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
 
@@ -34,11 +33,6 @@ export function logUpdate(ctx, tag = 'update') {
 
 // session — строго ДО stage
 bot.use(session());
-
-// Ловец ссылок активируем как можно раньше, до команд
-if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
-  bot.use(createLinkCaptureMiddleware());
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 0) Любая команда — сперва очищаем "ожидание ссылки", чтобы визард не висел
@@ -207,13 +201,7 @@ bot.command('help', async (ctx) => {
 });
 
 // 1) Командные хендлеры должны идти ПЕРЕД общими ловцами текста
-bot.command(['ads', 'add'], async (ctx) => {
-  const userId = ctx.from?.id;
-  if (userId && config.adsMasters?.has(String(userId))) {
-    return ctx.scene.enter('ads-wizard');
-  }
-  return handleAdsUserCommand(ctx);
-});
+bot.command(['ads', 'add'], async (ctx) => ctx.scene.enter('adsWizard'));
 
 // Рекомендуется иметь /cancel
 bot.command('cancel', async (ctx) => {
@@ -407,6 +395,11 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
     await ctx.reply('⚠️ Произошла ошибка. Попробуйте позже.');
   }
 });
+
+// Ловец ссылок должен идти после командных обработчиков
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  bot.use(createLinkCaptureMiddleware());
+}
 
 // Безопасная остановка в webhook-режиме
 function safeStop(reason) {
