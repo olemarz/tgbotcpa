@@ -12,12 +12,14 @@
 
 ## Сцена `adsWizard`
 Файл: `src/bot/adsWizard.js`. Сцена содержит последовательность шагов (`Step.*`), валидирует ввод и сохраняет оффер. Основные шаги:
-1. **Ввод ссылки** (`Step.TARGET_URL`): проверка формата `https://t.me/...`, hostname ∈ {t.me, telegram.me, telegram.dog}. Функции `parseTelegramUrl` и `buildChatLookup` валидируют ID/username, запрещают инвайт-ссылки (`t.me/+...`).
-2. **Выбор типа события** (`Step.EVENT_TYPE`): inline-клавиатура (`buildEventKeyboard`) с типами из `EVENT_TYPES`. `ensureEventCompatibility` проверяет соответствие типа и ссылки (например, для реакций требуется `messageId`).
-3. **Ставки** (`Step.BASE_RATE` и `Step.PREMIUM_RATE`): ввод чисел, минимум берётся из `config.MIN_RATES` (например, join_group ≥ 5/10). `parseNumber` приводит ввод, `ensureMinRate` проверяет пороги.
-4. **Кап** (`Step.CAPS_TOTAL`): принимает целое число от 10 и выше. Значения < 10 отвергаются с подсказкой «Минимум 10…».
-5. **Название и slug** (`Step.OFFER_NAME`, `Step.OFFER_SLUG`): название произвольное. Для slug используется `slugify`/`ensureUniqueSlug`; пользователь может оставить авто-slug (`-`) или ввести свой (3–60 символов, латиница/цифры/тире).
-6. **Подтверждение** (`Step.CONFIRM`): бот выводит сводку (`buildSummary`), кнопки «✅ Запустить» / «✏️ Исправить». При подтверждении создаётся запись в таблице `offers`, аудит (`insertOfferAuditLog`), и отправляется итоговый URL вида `https://<BASE_URL_HOST>/click/<offer_id>?uid={your_uid}`.
+1. **Ввод ссылки** (`Step.TARGET_URL`): проверка формата `https://t.me/...`, hostname ∈ {t.me, telegram.me, telegram.dog}. Инвайт-ссылки (`t.me/+...`) не принимаются.
+2. **Выбор типа события** (`Step.EVENT_TYPE`): inline-клавиатура (`buildEventKeyboard`) с типами из `EVENT_TYPES`. После выбора сохраняется `event_type`.
+3. **Базовая ставка** (`Step.BASE_RATE`): число с точностью до копеек. Минимум берётся из `config.MIN_RATES[event_type].base`.
+4. **Премиум-ставка** (`Step.PREMIUM_RATE`): не может быть ниже базовой либо минимального порога для премиума (`config.MIN_RATES[event_type].premium`).
+5. **Общий кап** (`Step.CAPS_TOTAL`): целое число ≥ 0. Ноль означает отсутствие ограничения.
+6. **Геотаргетинг** (`Step.GEO_TARGETING`): пустая строка/«0» — без ограничений. Любой другой ввод парсится через `parseGeoInput` и сохраняется в виде whitelist.
+7. **Название** (`Step.OFFER_NAME`): произвольная непустая строка, также сохраняется в `offer.name`.
+8. **Slug** (`Step.OFFER_SLUG`): отображается авто-slug (результат `slugify`). Пользователь может оставить `-` или ввести собственный slug (до 60 символов, латиница/цифры/дефис). После валидации вызывается `ensureUniqueSlug`, создаётся запись `offers`, пишется аудит и отправляется итоговая ссылка `buildTrackingUrl()`.
 
 Дополнительно:
 - Команды **«Отмена»/`/cancel`** завершают сцену (`cancelWizard`).
