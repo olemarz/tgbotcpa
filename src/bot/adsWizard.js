@@ -152,6 +152,8 @@ function markAwaitingTargetLink(ctx) {
   }
   ctx.session.mode = 'offer:create';
   ctx.session.awaiting = 'target_link';
+  delete ctx.session.target_link;
+  delete ctx.session.raw_target_link;
 }
 
 function clearAwaitingTargetLink(ctx) {
@@ -189,10 +191,15 @@ function isBack(ctx) {
 
 async function cancelWizard(ctx, message = 'Мастер отменён.') {
   clearAwaitingTargetLink(ctx);
+  if (ctx.session) {
+    delete ctx.session.target_link;
+    delete ctx.session.raw_target_link;
+  }
   await ctx.reply(message);
   return ctx.scene.leave();
 }
 
+// Там, где показывается шаг "Пришлите ссылку на канал/чат"
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
   markAwaitingTargetLink(ctx);
@@ -636,6 +643,11 @@ const adsWizard = new Scenes.WizardScene(
     ctx.wizard.state.offer.target_url = targetMeta.normalizedUrl;
     ctx.wizard.state.offer.target_meta = targetMeta;
     ctx.wizard.state.offer.chat_ref = buildChatRef(targetMeta);
+    if (!ctx.session) {
+      ctx.session = {};
+    }
+    ctx.session.target_link = targetMeta.normalizedUrl;
+    ctx.session.raw_target_link = url;
     clearAwaitingTargetLink(ctx);
 
     await promptForStep(ctx, Step.EVENT_TYPE);
@@ -648,6 +660,10 @@ const adsWizard = new Scenes.WizardScene(
       }
       if (isBack(ctx)) {
         clearAwaitingTargetLink(ctx);
+        if (ctx.session) {
+          delete ctx.session.target_link;
+          delete ctx.session.raw_target_link;
+        }
         await promptForStep(ctx, Step.TARGET_URL);
         ctx.wizard.selectStep(Step.TARGET_URL);
         return;
@@ -664,6 +680,10 @@ const adsWizard = new Scenes.WizardScene(
       await ctx.editMessageReplyMarkup();
       ctx.wizard.selectStep(Step.TARGET_URL);
       clearAwaitingTargetLink(ctx);
+      if (ctx.session) {
+        delete ctx.session.target_link;
+        delete ctx.session.raw_target_link;
+      }
       await promptForStep(ctx, Step.TARGET_URL);
       return;
     }
@@ -876,6 +896,10 @@ const adsWizard = new Scenes.WizardScene(
     if (ctx.callbackQuery.data === 'confirm:cancel') {
       await ctx.editMessageText('Создание оффера отменено.');
       clearAwaitingTargetLink(ctx);
+      if (ctx.session) {
+        delete ctx.session.target_link;
+        delete ctx.session.raw_target_link;
+      }
       return ctx.scene.leave();
     }
 
@@ -908,6 +932,10 @@ const adsWizard = new Scenes.WizardScene(
       await ctx.editMessageText('Не удалось сохранить оффер: ' + (error.message || 'ошибка БД'));
     }
     clearAwaitingTargetLink(ctx);
+    if (ctx.session) {
+      delete ctx.session.target_link;
+      delete ctx.session.raw_target_link;
+    }
     return ctx.scene.leave();
   }
 );

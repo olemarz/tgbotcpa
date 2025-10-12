@@ -35,9 +35,11 @@ export function logUpdate(ctx, tag = 'update') {
 // session — строго ДО stage
 bot.use(session());
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 0) Любая команда — сперва очищаем "ожидание ссылки", чтобы визард не висел
 bot.use(async (ctx, next) => {
-  const t = ctx.message?.text ?? '';
-  if (typeof t === 'string' && t.trimStart().startsWith('/')) {
+  const text = ctx.message?.text ?? '';
+  if (typeof text === 'string' && text.trimStart().startsWith('/')) {
     if (ctx.session) {
       delete ctx.session.awaiting;
       delete ctx.session.mode;
@@ -47,6 +49,7 @@ bot.use(async (ctx, next) => {
   }
   return next();
 });
+// ─────────────────────────────────────────────────────────────────────────────
 
 // сцены
 const stage = new Scenes.Stage([adsWizard]);
@@ -198,6 +201,7 @@ bot.command('help', async (ctx) => {
   );
 });
 
+// 1) Командные хендлеры должны идти ПЕРЕД общими ловцами текста
 bot.command(['ads', 'add'], async (ctx) => {
   const userId = ctx.from?.id;
   if (userId && config.adsMasters?.has(String(userId))) {
@@ -206,6 +210,7 @@ bot.command(['ads', 'add'], async (ctx) => {
   return handleAdsUserCommand(ctx);
 });
 
+// Рекомендуется иметь /cancel
 bot.command('cancel', async (ctx) => {
   if (ctx.scene?.current) {
     try {
@@ -221,7 +226,7 @@ bot.command('cancel', async (ctx) => {
     delete ctx.session.raw_target_link;
   }
   try {
-    await ctx.reply('Мастер прерван');
+    await ctx.reply('Мастер прерван. Можно начать заново: /ads');
   } catch (error) {
     console.error('cancel command reply error', error?.message || error);
   }
@@ -278,7 +283,7 @@ bot.action(/^stat:(.+)$/i, async (ctx) => {
   await respondWithStats(ctx, dateKey, { isCallback: true });
 });
 
-// общий ловец ссылок (после команд)
+// 2) Общий ловец ссылок ПОДключаем ТОЛЬКО после команд и только если не отключён
 if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   bot.use(createLinkCaptureMiddleware());
 }
