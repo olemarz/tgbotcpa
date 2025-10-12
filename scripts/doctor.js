@@ -1,7 +1,8 @@
 /* eslint-disable no-console */
 import 'dotenv/config';
 import assert from 'node:assert';
-import { Client } from 'pg';
+import pkg from 'pg';
+const { Client } = pkg;
 import fetch from 'node-fetch';
 
 (async () => {
