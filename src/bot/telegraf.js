@@ -35,6 +35,19 @@ export function logUpdate(ctx, tag = 'update') {
 // session — строго ДО stage
 bot.use(session());
 
+bot.use(async (ctx, next) => {
+  const t = ctx.message?.text ?? '';
+  if (typeof t === 'string' && t.trimStart().startsWith('/')) {
+    if (ctx.session) {
+      delete ctx.session.awaiting;
+      delete ctx.session.mode;
+      delete ctx.session.target_link;
+      delete ctx.session.raw_target_link;
+    }
+  }
+  return next();
+});
+
 // сцены
 const stage = new Scenes.Stage([adsWizard]);
 bot.use(stage.middleware());
@@ -185,12 +198,33 @@ bot.command('help', async (ctx) => {
   );
 });
 
-bot.command('ads', async (ctx) => {
+bot.command(['ads', 'add'], async (ctx) => {
   const userId = ctx.from?.id;
   if (userId && config.adsMasters?.has(String(userId))) {
     return ctx.scene.enter('ads-wizard');
   }
   return handleAdsUserCommand(ctx);
+});
+
+bot.command('cancel', async (ctx) => {
+  if (ctx.scene?.current) {
+    try {
+      await ctx.scene.leave();
+    } catch (error) {
+      console.error('cancel command leave error', error?.message || error);
+    }
+  }
+  if (ctx.session) {
+    delete ctx.session.awaiting;
+    delete ctx.session.mode;
+    delete ctx.session.target_link;
+    delete ctx.session.raw_target_link;
+  }
+  try {
+    await ctx.reply('Мастер прерван');
+  } catch (error) {
+    console.error('cancel command reply error', error?.message || error);
+  }
 });
 
 bot.action(/^skip:([0-9a-f-]{36})$/i, async (ctx) => {

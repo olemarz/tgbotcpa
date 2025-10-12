@@ -647,6 +647,7 @@ const adsWizard = new Scenes.WizardScene(
         return cancelWizard(ctx);
       }
       if (isBack(ctx)) {
+        clearAwaitingTargetLink(ctx);
         await promptForStep(ctx, Step.TARGET_URL);
         ctx.wizard.selectStep(Step.TARGET_URL);
         return;
@@ -662,6 +663,7 @@ const adsWizard = new Scenes.WizardScene(
     if (ctx.callbackQuery.data === 'nav:back') {
       await ctx.editMessageReplyMarkup();
       ctx.wizard.selectStep(Step.TARGET_URL);
+      clearAwaitingTargetLink(ctx);
       await promptForStep(ctx, Step.TARGET_URL);
       return;
     }
