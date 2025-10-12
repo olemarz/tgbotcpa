@@ -8,20 +8,40 @@ import { pool } from './index.js';
 const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dir = path.join(__dirname, 'migrations');
+const migrationsDir = path.join(__dirname, 'migrations');
+const seedsDir = path.join(__dirname, 'seeds');
 
 async function applyMigrationsWithClient(client) {
   await client.query('CREATE TABLE IF NOT EXISTS _migrations(id text primary key, applied_at timestamptz default now())');
-  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort() : [];
+  const files = fs.existsSync(migrationsDir) ? fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort() : [];
   for (const file of files) {
     const done = await client.query('SELECT 1 FROM _migrations WHERE id=$1', [file]);
     if (done.rowCount) continue;
-    const sql = fs.readFileSync(path.join(dir, file), 'utf8');
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
     console.log('-> applying', file);
     await client.query('BEGIN');
     try {
       await client.query(sql);
       await client.query('INSERT INTO _migrations(id) VALUES($1)', [file]);
+      await client.query('COMMIT');
+      console.log('✓', file);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      console.error('✗', file, e.message);
+      throw e;
+    }
+  }
+}
+
+async function applySeedsWithClient(client) {
+  if (process.env.SEED !== '1') return;
+  const files = fs.existsSync(seedsDir) ? fs.readdirSync(seedsDir).filter(f => f.endsWith('.sql')).sort() : [];
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(seedsDir, file), 'utf8');
+    console.log('-> seeding', file);
+    await client.query('BEGIN');
+    try {
+      await client.query(sql);
       await client.query('COMMIT');
       console.log('✓', file);
     } catch (e) {
@@ -38,6 +58,7 @@ export async function runMigrations() {
     const client = await pool.connect();
     try {
       await applyMigrationsWithClient(client);
+      await applySeedsWithClient(client);
       console.log('Migration complete');
     } finally {
       client.release();
@@ -49,6 +70,7 @@ export async function runMigrations() {
   await client.connect();
   try {
     await applyMigrationsWithClient(client);
+    await applySeedsWithClient(client);
     console.log('Migration complete');
   } finally {
     await client.end();
