@@ -6,7 +6,6 @@ import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
 import { config } from '../config.js';
 import { query, insertOfferAuditLog } from '../db/index.js';
 import { uuid } from '../util/id.js';
-import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
 
 const logPrefix = '[adsWizard]';
@@ -35,27 +34,21 @@ const Step = {
   INTRO: 0,
   TARGET_URL: 1,
   EVENT_TYPE: 2,
-  BASE_RATE: 3,
-  PREMIUM_RATE: 4,
-  CAPS_TOTAL: 5,
-  GEO_TARGETING: 6,
-  OFFER_NAME: 7,
-  OFFER_SLUG: 8,
-  CONFIRM: 9,
+  BASE_BID: 3,
+  PREMIUM_BID: 4,
+  TOTAL_CAP: 5,
+  CONFIRM: 6,
 };
 
 const STEP_NUMBERS = {
   [Step.TARGET_URL]: 1,
   [Step.EVENT_TYPE]: 2,
-  [Step.BASE_RATE]: 3,
-  [Step.PREMIUM_RATE]: 4,
-  [Step.CAPS_TOTAL]: 5,
-  [Step.GEO_TARGETING]: 6,
-  [Step.OFFER_NAME]: 7,
-  [Step.OFFER_SLUG]: 8,
+  [Step.BASE_BID]: 3,
+  [Step.PREMIUM_BID]: 4,
+  [Step.TOTAL_CAP]: 5,
 };
 
-const TOTAL_INPUT_STEPS = Math.max(...Object.values(STEP_NUMBERS));
+const TOTAL_INPUT_STEPS = 6;
 
 let offersColumnsPromise;
 async function getOffersColumns() {
@@ -89,17 +82,6 @@ async function notifyChat(telegram, chatId, text) {
 async function slugExists(slug) {
   const res = await query('SELECT 1 FROM offers WHERE slug = $1 LIMIT 1', [slug]);
   return res.rowCount > 0;
-}
-
-function slugify(name) {
-  const base = name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-  return base || `offer-${Math.random().toString(36).slice(2, 6)}`;
 }
 
 async function ensureUniqueSlug(base) {
@@ -146,6 +128,53 @@ function formatRate(value) {
   return `${value} ₽`;
 }
 
+function autoTitleFromLink(link) {
+  if (!link) {
+    return 'Offer';
+  }
+
+  try {
+    const url = new URL(link);
+    const segments = url.pathname.split('/').filter(Boolean);
+
+    for (const segment of segments) {
+      if (segment && segment.toLowerCase() !== 'c') {
+        return segment;
+      }
+    }
+
+    if (segments.length > 0) {
+      return segments[segments.length - 1] || 'Offer';
+    }
+
+    const hostname = url.hostname.replace(/^www\./, '');
+    if (hostname) {
+      const base = hostname.split('.')[0];
+      if (base) {
+        return base;
+      }
+    }
+  } catch (error) {
+    // ignore
+  }
+
+  return 'Offer';
+}
+
+function autoSlugFromTitle(title) {
+  const normalized = String(title || 'offer')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  const base = normalized || 'offer';
+  const suffix = Math.random().toString(16).slice(2, 8);
+  const trimmed = base.slice(0, Math.max(1, 60 - suffix.length - 1));
+  return `${trimmed}-${suffix}`;
+}
+
 function markAwaitingTargetLink(ctx) {
   if (!ctx.session) {
     ctx.session = {};
@@ -166,11 +195,6 @@ function clearAwaitingTargetLink(ctx) {
   if (ctx.session.awaiting === 'target_link') {
     delete ctx.session.awaiting;
   }
-}
-
-function ensureMinRate(eventType, value, tier) {
-  const min = minRates[eventType]?.[tier] ?? 0;
-  return value >= min;
 }
 
 function getMessageText(ctx) {
@@ -225,56 +249,32 @@ async function promptEventType(ctx) {
   );
 }
 
-async function promptBaseRate(ctx) {
-  const { event_type: eventType } = ctx.wizard.state.offer;
-  const min = minRates[eventType]?.base ?? 0;
-  const stepNum = STEP_NUMBERS[Step.BASE_RATE];
+async function promptBaseBid(ctx) {
+  const { action_type: actionType } = ctx.wizard.state.offer;
+  const min = Math.max(5, minRates[actionType]?.base ?? 0);
+  const stepNum = STEP_NUMBERS[Step.BASE_BID];
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите базовую ставку, не ниже ${min}.\n` +
       'Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].'
   );
 }
 
-async function promptPremiumRate(ctx) {
-  const stepNum = STEP_NUMBERS[Step.PREMIUM_RATE];
+async function promptPremiumBid(ctx) {
+  const stepNum = STEP_NUMBERS[Step.PREMIUM_BID];
+  const { base_bid: baseBid, action_type: actionType } = ctx.wizard.state.offer;
+  const minPremium = Math.max(baseBid ?? 0, 10, minRates[actionType]?.premium ?? 0);
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей.\n` +
-      'Она не может быть ниже базовой ставки или минимального порога для премиума. Команды: [Назад], [Отмена].'
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей (не ниже ${minPremium}).\n` +
+      'Она не может быть ниже базовой ставки, 10 ₽ или минимального порога для премиума. Команды: [Назад], [Отмена].'
   );
 }
 
-async function promptCapsTotal(ctx) {
-  const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
+async function promptTotalCap(ctx) {
+  const stepNum = STEP_NUMBERS[Step.TOTAL_CAP];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число от 10 и выше).\n` +
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число, 0 = без ограничений).\n` +
       'Команды: [Назад], [Отмена].'
   );
-}
-
-async function promptGeoTargeting(ctx) {
-  const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите список стран или зон через запятую. ` +
-      'Примеры: СНГ, США, Россия, Казахстан, EU.\nКоманды: [Назад], [Отмена].'
-  );
-}
-
-async function promptOfferName(ctx) {
-  const stepNum = STEP_NUMBERS[Step.OFFER_NAME];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите название оффера.\n` +
-      'Команды: [Назад], [Отмена].'
-  );
-}
-
-async function promptOfferSlug(ctx) {
-  const stepNum = STEP_NUMBERS[Step.OFFER_SLUG];
-  const { autoSlug } = ctx.wizard.state.offer;
-  const prompt =
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${autoSlug}</code>.\n` +
-    'Если хотите оставить — отправьте «-». Если нужен свой slug (латиница, цифры, тире, от 3 символов) — пришлите его.\n' +
-    'Команды: [Назад], [Отмена].';
-  await ctx.replyWithHTML(prompt);
 }
 
 function parseTelegramUrl(rawUrl) {
@@ -475,20 +475,16 @@ function buildChatRef(targetMeta) {
 }
 
 function buildSummary(offer) {
+  const title = offer.title || offer.name || 'Offer';
   const lines = [
-    `<b>${offer.name}</b>`,
-    `Целевая ссылка: ${offer.target_url}`,
+    `<b>${title}</b>`,
+    `Целевая ссылка: ${offer.target_link}`,
     `Цель: ${formatChatRef(offer.chat_ref)}`,
-    `ЦД: ${eventLabels[offer.event_type]}`,
-    `Базовая ставка: ${formatRate(offer.base_rate)}`,
-    `Премиум ставка: ${formatRate(offer.premium_rate)}`,
-    `Кап: ${formatCapsTotal(offer.caps_total)}`,
+    `ЦД: ${eventLabels[offer.action_type] || offer.action_type}`,
+    `Базовая ставка: ${formatRate(offer.base_bid)}`,
+    `Премиум ставка: ${formatRate(offer.premium_bid)}`,
+    `Лимит: ${formatCapsTotal(offer.total_cap)}`,
   ];
-
-  if (Array.isArray(offer.geo_whitelist) && offer.geo_whitelist.length > 0) {
-    lines.push(`Гео: ${offer.geo_whitelist.join(', ')}`);
-  }
-
   lines.push(`Slug: <code>${offer.slug}</code>`);
   return lines.join('\n');
 }
@@ -501,23 +497,14 @@ async function promptForStep(ctx, step) {
     case Step.EVENT_TYPE:
       await promptEventType(ctx);
       break;
-    case Step.BASE_RATE:
-      await promptBaseRate(ctx);
+    case Step.BASE_BID:
+      await promptBaseBid(ctx);
       break;
-    case Step.PREMIUM_RATE:
-      await promptPremiumRate(ctx);
+    case Step.PREMIUM_BID:
+      await promptPremiumBid(ctx);
       break;
-    case Step.CAPS_TOTAL:
-      await promptCapsTotal(ctx);
-      break;
-    case Step.GEO_TARGETING:
-      await promptGeoTargeting(ctx);
-      break;
-    case Step.OFFER_NAME:
-      await promptOfferName(ctx);
-      break;
-    case Step.OFFER_SLUG:
-      await promptOfferSlug(ctx);
+    case Step.TOTAL_CAP:
+      await promptTotalCap(ctx);
       break;
     default:
       break;
@@ -527,28 +514,86 @@ async function promptForStep(ctx, step) {
 async function insertOffer(offer, audit) {
   const offerId = uuid();
   const { url: trackingUrl } = buildTrackingUrl(offerId, { src: 'heypay' });
-  const columns = [
-    'id',
-    'target_url',
-    'event_type',
-    'name',
-    'slug',
-    'base_rate',
-    'premium_rate',
-    'caps_total',
-  ];
-  const values = [
-    offerId,
-    offer.target_url,
-    offer.event_type,
-    offer.name,
-    offer.slug,
-    Math.round(offer.base_rate),
-    Math.round(offer.premium_rate),
-    offer.caps_total,
-  ];
+  const columns = ['id'];
+  const values = [offerId];
 
   const columnsSet = await getOffersColumns();
+
+  const targetLink = offer.target_link || offer.target_url;
+  if (columnsSet.has('target_link')) {
+    columns.push('target_link');
+    values.push(targetLink);
+  }
+  if (columnsSet.has('target_url')) {
+    columns.push('target_url');
+    values.push(targetLink);
+  }
+
+  const actionType = offer.action_type || offer.event_type;
+  if (columnsSet.has('action_type')) {
+    columns.push('action_type');
+    values.push(actionType);
+  }
+  if (columnsSet.has('event_type')) {
+    columns.push('event_type');
+    values.push(actionType);
+  }
+
+  const title = offer.title || offer.name || 'Offer';
+  if (columnsSet.has('title')) {
+    columns.push('title');
+    values.push(title);
+  }
+  if (columnsSet.has('name')) {
+    columns.push('name');
+    values.push(title);
+  }
+
+  if (columnsSet.has('slug')) {
+    columns.push('slug');
+    values.push(offer.slug);
+  }
+
+  const baseBid = Math.round(offer.base_bid ?? offer.base_rate ?? 0);
+  if (columnsSet.has('base_bid')) {
+    columns.push('base_bid');
+    values.push(baseBid);
+  }
+  if (columnsSet.has('base_rate')) {
+    columns.push('base_rate');
+    values.push(baseBid);
+  }
+
+  const premiumBid = Math.round(offer.premium_bid ?? offer.premium_rate ?? 0);
+  if (columnsSet.has('premium_bid')) {
+    columns.push('premium_bid');
+    values.push(premiumBid);
+  }
+  if (columnsSet.has('premium_rate')) {
+    columns.push('premium_rate');
+    values.push(premiumBid);
+  }
+
+  const totalCap = offer.total_cap ?? offer.caps_total ?? 0;
+  if (columnsSet.has('total_cap')) {
+    columns.push('total_cap');
+    values.push(totalCap);
+  }
+  if (columnsSet.has('caps_total')) {
+    columns.push('caps_total');
+    values.push(totalCap);
+  }
+
+  if (columnsSet.has('cap_window')) {
+    columns.push('cap_window');
+    values.push(offer.cap_window ?? 0);
+  }
+
+  if (columnsSet.has('time_targeting')) {
+    columns.push('time_targeting');
+    values.push(offer.time_targeting ?? null);
+  }
+
   if (columnsSet.has('status')) {
     columns.push('status');
     values.push('active');
@@ -559,7 +604,7 @@ async function insertOffer(offer, audit) {
   }
   if (columnsSet.has('geo_mode')) {
     columns.push('geo_mode');
-    values.push(offer.geo_mode || null);
+    values.push(offer.geo_mode ?? 'any');
   }
   if (columnsSet.has('geo_list')) {
     columns.push('geo_list');
@@ -596,7 +641,7 @@ async function insertOffer(offer, audit) {
   console.info(`${logPrefix} offer inserted`, {
     offerId: insertedId,
     slug: offer.slug,
-    eventType: offer.event_type,
+    eventType: offer.action_type || offer.event_type,
   });
 
   return { id: insertedId, trackingUrl };
@@ -640,6 +685,7 @@ const adsWizard = new Scenes.WizardScene(
       return;
     }
 
+    ctx.wizard.state.offer.target_link = targetMeta.normalizedUrl;
     ctx.wizard.state.offer.target_url = targetMeta.normalizedUrl;
     ctx.wizard.state.offer.target_meta = targetMeta;
     ctx.wizard.state.offer.chat_ref = buildChatRef(targetMeta);
@@ -699,9 +745,10 @@ const adsWizard = new Scenes.WizardScene(
       return;
     }
 
+    ctx.wizard.state.offer.action_type = eventType;
     ctx.wizard.state.offer.event_type = eventType;
     await ctx.editMessageReplyMarkup();
-    await promptForStep(ctx, Step.BASE_RATE);
+    await promptForStep(ctx, Step.BASE_BID);
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -715,16 +762,18 @@ const adsWizard = new Scenes.WizardScene(
     }
 
     const value = parseNumber(getMessageText(ctx));
-    const eventType = ctx.wizard.state.offer.event_type;
-    if (value === null || !ensureMinRate(eventType, value, 'base')) {
-      await ctx.reply(`Нужно число не ниже ${minRates[eventType]?.base ?? 0}. Попробуйте ещё раз.`);
+    const actionType = ctx.wizard.state.offer.action_type;
+    const minBase = Math.max(5, minRates[actionType]?.base ?? 0);
+    if (value === null || value < minBase) {
+      await ctx.reply(`Нужно число не ниже ${minBase}. Попробуйте ещё раз.`);
       return;
     }
 
+    ctx.wizard.state.offer.base_bid = value;
     ctx.wizard.state.offer.base_rate = value;
-    const minPremium = Math.max(value, minRates[eventType]?.premium ?? 0);
+    const minPremium = Math.max(value, 10, minRates[actionType]?.premium ?? 0);
     ctx.wizard.state.offer.minPremium = minPremium;
-    await promptForStep(ctx, Step.PREMIUM_RATE);
+    await promptForStep(ctx, Step.PREMIUM_BID);
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -732,8 +781,8 @@ const adsWizard = new Scenes.WizardScene(
       return cancelWizard(ctx);
     }
     if (isBack(ctx)) {
-      await promptForStep(ctx, Step.BASE_RATE);
-      ctx.wizard.selectStep(Step.BASE_RATE);
+      await promptForStep(ctx, Step.BASE_BID);
+      ctx.wizard.selectStep(Step.BASE_BID);
       return;
     }
 
@@ -744,8 +793,9 @@ const adsWizard = new Scenes.WizardScene(
       return;
     }
 
+    ctx.wizard.state.offer.premium_bid = value;
     ctx.wizard.state.offer.premium_rate = value;
-    await promptForStep(ctx, Step.CAPS_TOTAL);
+    await promptForStep(ctx, Step.TOTAL_CAP);
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -753,118 +803,40 @@ const adsWizard = new Scenes.WizardScene(
       return cancelWizard(ctx);
     }
     if (isBack(ctx)) {
-      await promptForStep(ctx, Step.PREMIUM_RATE);
-      ctx.wizard.selectStep(Step.PREMIUM_RATE);
+      await promptForStep(ctx, Step.PREMIUM_BID);
+      ctx.wizard.selectStep(Step.PREMIUM_BID);
       return;
     }
 
     const text = getMessageText(ctx);
-    if (!text) {
-      await ctx.reply('Минимум 10. Введите значение от 10 и выше.');
+    if (text === undefined || text === null || text === '') {
+      await ctx.reply('Введите целое число (0 = без ограничений).');
       return;
     }
+
     const num = Number(text);
-    if (!Number.isInteger(num) || num < 10) {
-      await ctx.reply('Минимум 10. Введите значение от 10 и выше.');
+    if (!Number.isInteger(num) || num < 0) {
+      await ctx.reply('Введите целое число не ниже 0.');
       return;
     }
 
+    ctx.wizard.state.offer.total_cap = num;
     ctx.wizard.state.offer.caps_total = num;
-    await promptForStep(ctx, Step.GEO_TARGETING);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      ctx.wizard.selectStep(Step.CAPS_TOTAL);
-      await promptForStep(ctx, Step.CAPS_TOTAL);
-      return;
-    }
+    ctx.wizard.state.offer.cap_window = 0;
+    ctx.wizard.state.offer.time_targeting = null;
 
-    const text = getMessageText(ctx);
-    if (!text) {
-      await ctx.reply('Введите список стран или зон через запятую.');
-      return;
-    }
+    const targetMeta = ctx.wizard.state.offer.target_meta;
+    const rawTitle =
+      targetMeta?.username ||
+      targetMeta?.title ||
+      autoTitleFromLink(ctx.wizard.state.offer.target_link);
+    const autoTitle = rawTitle ? String(rawTitle).trim() || 'Offer' : 'Offer';
+    ctx.wizard.state.offer.title = autoTitle;
+    ctx.wizard.state.offer.name = autoTitle;
 
-    let codes;
-    try {
-      codes = parseGeoInput(text);
-    } catch (error) {
-      await ctx.reply(error?.message || 'Не удалось распознать гео. Попробуйте ещё раз.');
-      return;
-    }
-
-    ctx.wizard.state.offer.geo_mode = 'whitelist';
-    ctx.wizard.state.offer.geo_input = text.trim();
-    ctx.wizard.state.offer.geo_list = codes;
-    ctx.wizard.state.offer.geo_whitelist = codes;
-    await ctx.reply(`Гео: ${codes.join(', ')}`);
-
-    await promptForStep(ctx, Step.OFFER_NAME);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      ctx.wizard.selectStep(Step.GEO_TARGETING);
-      await promptForStep(ctx, Step.GEO_TARGETING);
-      return;
-    }
-
-    const name = getMessageText(ctx);
-    if (!name) {
-      await ctx.reply('Введите непустое название.');
-      return;
-    }
-
-    ctx.wizard.state.offer.name = name;
-    const base = slugify(name);
-    const unique = await ensureUniqueSlug(base);
-    ctx.wizard.state.offer.slug = unique;
-    ctx.wizard.state.offer.autoSlug = unique;
-    if (unique !== base) {
-      console.info(`${logPrefix} slug adjusted to avoid conflict`, { base, unique });
-    }
-
-    await promptForStep(ctx, Step.OFFER_SLUG);
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (isCancel(ctx)) {
-      return cancelWizard(ctx);
-    }
-    if (isBack(ctx)) {
-      ctx.wizard.selectStep(Step.OFFER_NAME);
-      await promptForStep(ctx, Step.OFFER_NAME);
-      return;
-    }
-
-    const text = getMessageText(ctx);
-    const { autoSlug } = ctx.wizard.state.offer;
-
-    if (!text || text === '-') {
-      ctx.wizard.state.offer.slug = autoSlug;
-    } else {
-      if (!/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/i.test(text) || text.length < 3 || text.length > 60) {
-        await ctx.reply('Slug должен содержать латиницу, цифры и тире (3–60 символов), без пробелов.');
-        return;
-      }
-      const normalized = text.toLowerCase();
-      if (await slugExists(normalized)) {
-        const suggestion = await ensureUniqueSlug(normalized);
-        console.warn(`${logPrefix} slug conflict`, { slug: normalized, suggestion });
-        await ctx.reply(
-          `Такой slug уже занят. Доступный вариант: ${suggestion}. Отправьте его или придумайте другой.`
-        );
-        return;
-      }
-      ctx.wizard.state.offer.slug = normalized;
-    }
+    const baseSlug = autoSlugFromTitle(autoTitle);
+    const uniqueSlug = await ensureUniqueSlug(baseSlug);
+    ctx.wizard.state.offer.slug = uniqueSlug;
 
     const summary = buildSummary(ctx.wizard.state.offer);
     await ctx.replyWithHTML(
@@ -884,8 +856,8 @@ const adsWizard = new Scenes.WizardScene(
           return cancelWizard(ctx);
         }
         if (isBack(ctx)) {
-          ctx.wizard.selectStep(Step.OFFER_SLUG);
-          await promptForStep(ctx, Step.OFFER_SLUG);
+          ctx.wizard.selectStep(Step.TOTAL_CAP);
+          await promptForStep(ctx, Step.TOTAL_CAP);
         }
       }
       return;
@@ -904,9 +876,9 @@ const adsWizard = new Scenes.WizardScene(
     }
 
     if (ctx.callbackQuery.data === 'confirm:back') {
-      await ctx.editMessageText('Вернёмся и поправим slug или другие данные.');
-      ctx.wizard.selectStep(Step.OFFER_SLUG);
-      await promptForStep(ctx, Step.OFFER_SLUG);
+      await ctx.editMessageText('Вернёмся и поправим данные.');
+      ctx.wizard.selectStep(Step.TOTAL_CAP);
+      await promptForStep(ctx, Step.TOTAL_CAP);
       return;
     }
 

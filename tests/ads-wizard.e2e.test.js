@@ -62,12 +62,12 @@ function createWizardContext() {
   return ctx;
 }
 
-describe('ads wizard geo targeting flow', () => {
+describe('ads wizard flow', () => {
   before(async () => {
     await runMigrations();
   });
 
-  it('creates offer with geo whitelist after geo targeting step', async () => {
+  it('creates offer with generated title and slug', async () => {
     await query('DELETE FROM offers');
 
     const ctx = createWizardContext();
@@ -92,39 +92,26 @@ describe('ads wizard geo targeting flow', () => {
     ctx.message = { text: '100' };
     await steps[5](ctx);
 
-    ctx.message = { text: 'СНГ, DE' };
-    await steps[6](ctx);
-
-    ctx.message = { text: 'Тестовый оффер' };
-    await steps[7](ctx);
-
-    ctx.message = { text: '-' };
-    await steps[8](ctx);
-    ctx.message = undefined;
-
     ctx.callbackQuery = { data: 'confirm:create' };
-    await steps[9](ctx);
+    await steps[6](ctx);
 
     assert.equal(ctx.sceneLeft, true);
 
-    const res = await query('SELECT geo_whitelist FROM offers LIMIT 1');
+    const res = await query(
+      `SELECT target_url, event_type, name, slug, base_rate, premium_rate, caps_total, chat_ref
+         FROM offers
+         LIMIT 1`
+    );
     assert.equal(res.rowCount, 1);
-    const whitelist = res.rows[0].geo_whitelist;
-    assert.ok(Array.isArray(whitelist));
-    assert.ok(whitelist.length > 0);
-    assert.deepEqual(whitelist, [
-      'RU',
-      'BY',
-      'UA',
-      'KZ',
-      'KG',
-      'AM',
-      'AZ',
-      'MD',
-      'TM',
-      'TJ',
-      'UZ',
-      'DE',
-    ]);
+    const row = res.rows[0];
+    assert.equal(row.target_url, 'https://t.me/example_channel');
+    assert.equal(row.event_type, EVENT_TYPES.join_group);
+    assert.equal(row.name, 'example_channel');
+    assert.equal(row.base_rate, 20);
+    assert.equal(row.premium_rate, 25);
+    assert.equal(row.caps_total, 100);
+    assert.ok(typeof row.slug === 'string' && row.slug.startsWith('example-channel-'));
+    assert.ok(row.chat_ref);
+    assert.equal(row.chat_ref.username, 'example_channel');
   });
 });
