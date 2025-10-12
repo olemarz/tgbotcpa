@@ -1,3 +1,5 @@
+import { ISO_ALPHA3_TO_ALPHA2 } from './iso3166.js';
+
 const CIS_CODES = ['RU', 'BY', 'UA', 'KZ', 'KG', 'AM', 'AZ', 'MD', 'TM', 'TJ', 'UZ'];
 const EU_CODES = [
   'AT',
@@ -219,6 +221,12 @@ export function parseGeoInput(input) {
       codes = ZONE_MAP[upper];
     } else if (/^[A-Z]{2}$/.test(upper)) {
       codes = [upper];
+    } else if (/^[A-Z]{3}$/.test(upper)) {
+      const iso2 = ISO_ALPHA3_TO_ALPHA2[upper];
+      if (!iso2) {
+        throw new Error(`Не удалось распознать гео: ${part}`);
+      }
+      codes = [iso2];
     } else {
       codes = mapAliasToCodes(trimmed);
     }
