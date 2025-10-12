@@ -134,9 +134,18 @@ bot.start(async (ctx) => {
 });
 
 // ручной фолбэк для QA: /claim TOKEN
-bot.hears(/^\/claim\s+(\S+)/i, async (ctx) => {
+bot.command('claim', async (ctx) => {
   logUpdate(ctx, 'claim');
-  const token = ctx.match[1];
+  const text = ctx.message?.text ?? '';
+  const match =
+    typeof text === 'string' ? text.match(/^\/claim(?:@[\w_]+)?\s+(\S+)/i) : null;
+
+  if (!match) {
+    await ctx.reply('Пришлите токен командой: /claim <TOKEN>');
+    return;
+  }
+
+  const token = match[1];
   return handleStartWithToken(ctx, token);
 });
 
