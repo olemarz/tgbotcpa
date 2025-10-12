@@ -873,6 +873,7 @@ const adsWizard = new Scenes.WizardScene(
 
     if (ctx.callbackQuery.data === 'confirm:cancel') {
       await ctx.editMessageText('Создание оффера отменено.');
+      clearAwaitingTargetLink(ctx);
       return ctx.scene.leave();
     }
 
@@ -904,6 +905,7 @@ const adsWizard = new Scenes.WizardScene(
       console.error(`${logPrefix} insert error`, error);
       await ctx.editMessageText('Не удалось сохранить оффер: ' + (error.message || 'ошибка БД'));
     }
+    clearAwaitingTargetLink(ctx);
     return ctx.scene.leave();
   }
 );
