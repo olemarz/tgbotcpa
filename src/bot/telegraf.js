@@ -1,7 +1,8 @@
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session } from 'telegraf';
-import adsWizardScene, { startAdsWizard } from './adsWizard.js';
+import { Telegraf, Scenes } from 'telegraf';
+import session from 'telegraf/session';
+import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
