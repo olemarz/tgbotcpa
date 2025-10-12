@@ -8,7 +8,7 @@ import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
-import { handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
+// import { handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
 import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
 
@@ -235,31 +235,31 @@ bot.command('cancel', async (ctx) => {
   }
 });
 
-bot.action(/^skip:([0-9a-f-]{36})$/i, async (ctx) => {
-  if (ctx.scene?.current) {
-    await ctx.answerCbQuery();
-    return;
-  }
-  const offerId = ctx.match?.[1];
-  if (!offerId) {
-    await ctx.answerCbQuery();
-    return;
-  }
-  await handleAdsSkip(ctx, offerId);
-});
+// bot.action(/^skip:([0-9a-f-]{36})$/i, async (ctx) => {
+//   if (ctx.scene?.current) {
+//     await ctx.answerCbQuery();
+//     return;
+//   }
+//   const offerId = ctx.match?.[1];
+//   if (!offerId) {
+//     await ctx.answerCbQuery();
+//     return;
+//   }
+//   await handleAdsSkip(ctx, offerId);
+// });
 
-bot.action(/^check:([0-9a-f-]{36})$/i, async (ctx) => {
-  if (ctx.scene?.current) {
-    await ctx.answerCbQuery();
-    return;
-  }
-  const offerId = ctx.match?.[1];
-  if (!offerId) {
-    await ctx.answerCbQuery();
-    return;
-  }
-  await handleAdsCheck(ctx, offerId);
-});
+// bot.action(/^check:([0-9a-f-]{36})$/i, async (ctx) => {
+//   if (ctx.scene?.current) {
+//     await ctx.answerCbQuery();
+//     return;
+//   }
+//   const offerId = ctx.match?.[1];
+//   if (!offerId) {
+//     await ctx.answerCbQuery();
+//     return;
+//   }
+//   await handleAdsCheck(ctx, offerId);
+// });
 
 bot.command('stat', async (ctx) => {
   logUpdate(ctx, 'stat');
