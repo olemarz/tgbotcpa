@@ -35,6 +35,11 @@ export function logUpdate(ctx, tag = 'update') {
 // session — строго ДО stage
 bot.use(session());
 
+// Ловец ссылок активируем как можно раньше, до команд
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  bot.use(createLinkCaptureMiddleware());
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 0) Любая команда — сперва очищаем "ожидание ссылки", чтобы визард не висел
 bot.use(async (ctx, next) => {
@@ -282,11 +287,6 @@ bot.action(/^stat:(.+)$/i, async (ctx) => {
   const dateKey = formatDateKey(date);
   await respondWithStats(ctx, dateKey, { isCallback: true });
 });
-
-// 2) Общий ловец ссылок ПОДключаем ТОЛЬКО после команд и только если не отключён
-if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
-  bot.use(createLinkCaptureMiddleware());
-}
 
 bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   logUpdate(ctx, 'chat_member');
