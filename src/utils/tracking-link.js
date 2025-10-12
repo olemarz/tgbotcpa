@@ -1,9 +1,15 @@
-export function buildTrackingUrl(offerId, extra = {}) {
-  const base = (process.env.BASE_URL || '').replace(/\/$/, '');
-  const useStartApp = String(process.env.USE_STARTAPP || 'true').toLowerCase() === 'true';
-  const q = new URLSearchParams();
-  Object.entries(extra).forEach(([k, v]) => q.append(k, String(v)));
-  // сервер при клике создаёт start_token и редиректит:
-  const url = `${base}/click/${offerId}${q.toString() ? `?${q}` : ''}`;
-  return { url, mode: useStartApp ? 'startapp' : 'start' };
+export function buildTrackingUrl({ baseUrl, offerId, uid, source, sub1, sub2 }) {
+  const normalizedBase = (baseUrl || '').replace(/\/$/, '');
+  const u = new URL(`${normalizedBase}/click/${offerId}`);
+  if (uid) u.searchParams.set('uid', String(uid));
+  if (source) u.searchParams.set('source', String(source));
+  if (sub1) u.searchParams.set('sub1', String(sub1));
+  if (sub2) u.searchParams.set('sub2', String(sub2));
+  return u.toString();
+}
+
+export function buildStartDeepLink({ botUsername, token }) {
+  const u = new URL(`https://t.me/${botUsername}`);
+  u.searchParams.set('start', token);
+  return u.toString();
 }
