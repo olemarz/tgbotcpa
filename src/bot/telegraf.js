@@ -245,7 +245,9 @@ bot.action(/^stat:(.+)$/i, async (ctx) => {
 });
 
 // общий ловец ссылок (после команд)
-bot.use(createLinkCaptureMiddleware());
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  bot.use(createLinkCaptureMiddleware());
+}
 
 bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   logUpdate(ctx, 'chat_member');

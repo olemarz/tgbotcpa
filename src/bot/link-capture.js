@@ -83,29 +83,30 @@ export function createLinkCaptureMiddleware() {
       return next();
     }
 
+    const text = ctx.message?.text ?? '';
+    if (text.startsWith('/')) {
+      return next();
+    }
+
+    const mode = ctx.session?.mode;
+    const awaiting = ctx.session?.awaiting;
+    if (!(mode === 'offer:create' && awaiting === 'target_link')) {
+      return next();
+    }
+
     const message = ctx?.update?.message ?? ctx?.message;
     if (!message) {
       return next();
     }
 
-    if (ctx.scene?.current) {
-      return next();
-    }
-
-    const text = getMessageText(message);
-    if (typeof text === 'string' && text.trimStart().startsWith('/')) {
+    const normalizedText = getMessageText(message);
+    if (typeof normalizedText === 'string' && normalizedText.trimStart().startsWith('/')) {
       return next();
     }
 
     const entities = getMessageEntities(message);
     const hasUrlEntity = entities.some((entity) => entity?.type === 'url' || entity?.type === 'text_link');
     if (!hasUrlEntity) {
-      return next();
-    }
-
-    const session = ctx.session || {};
-    const expecting = session.mode === 'offer:create' && session.awaiting === 'target_link';
-    if (!expecting) {
       return next();
     }
 
