@@ -35,7 +35,7 @@ const linksLogPath = path.resolve(__dirname, '../../var/links.log');
 const CANCEL_KEYWORDS = new Set(['/cancel', 'отмена', '[отмена]', 'cancel']);
 const BACK_KEYWORDS = new Set(['/back', 'назад', '[назад]']);
 
-const Step = {
+const Step = Object.freeze({
   TARGET_URL: 1,
   EVENT_TYPE: 2,
   BASE_RATE: 3,
@@ -44,19 +44,23 @@ const Step = {
   GEO_TARGETING: 6,
   OFFER_NAME: 7,
   OFFER_SLUG: 8,
-};
+});
 
-const STEP_NUMBERS = {
-  [Step.TARGET_URL]: 1,
-  [Step.EVENT_TYPE]: 2,
-  [Step.BASE_RATE]: 3,
-  [Step.PREMIUM_RATE]: 4,
-  [Step.CAPS_TOTAL]: 5,
-  [Step.GEO_TARGETING]: 6,
-  [Step.OFFER_NAME]: 7,
-  [Step.OFFER_SLUG]: 8,
-};
-const TOTAL_INPUT_STEPS = Math.max(...Object.values(STEP_NUMBERS));
+const INPUT_STEP_ORDER = Object.freeze([
+  Step.TARGET_URL,
+  Step.EVENT_TYPE,
+  Step.BASE_RATE,
+  Step.PREMIUM_RATE,
+  Step.CAPS_TOTAL,
+  Step.GEO_TARGETING,
+  Step.OFFER_NAME,
+  Step.OFFER_SLUG,
+]);
+
+const STEP_NUMBERS = Object.freeze(
+  Object.fromEntries(INPUT_STEP_ORDER.map((step, index) => [step, index + 1]))
+);
+const TOTAL_INPUT_STEPS = INPUT_STEP_ORDER.length;
 
 let offersColumnsPromise;
 async function getOffersColumns() {

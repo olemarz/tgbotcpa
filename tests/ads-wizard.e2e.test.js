@@ -74,29 +74,37 @@ describe('ads wizard flow', () => {
     const steps = adsWizard.steps;
 
     await steps[0](ctx);
+    const prompts = [ctx.replies.at(-1)];
 
     ctx.message = { text: 'https://t.me/example_channel' };
     await steps[1](ctx);
+    prompts.push(ctx.replies.at(-1));
     ctx.message = undefined;
 
     ctx.callbackQuery = { data: `event:${EVENT_TYPES.join_group}` };
     await steps[2](ctx);
+    prompts.push(ctx.replies.at(-1));
     ctx.callbackQuery = undefined;
 
     ctx.message = { text: '20' };
     await steps[3](ctx);
+    prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '25' };
     await steps[4](ctx);
+    prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '100' };
     await steps[5](ctx);
+    prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '0' };
     await steps[6](ctx);
+    prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: 'Example Offer' };
     await steps[7](ctx);
+    prompts.push(ctx.replies.at(-1));
 
     ctx.message = { text: '-' };
     await steps[8](ctx);
@@ -126,5 +134,11 @@ describe('ads wizard flow', () => {
         assert.equal(list, '{}');
       }
     }
+
+    assert.equal(prompts.length, 8);
+    const promptHeaders = prompts.map((text) => String(text).split('\n')[0]);
+    promptHeaders.forEach((header, index) => {
+      assert.match(header, new RegExp(`^Шаг ${index + 1}/8`));
+    });
   });
 });
