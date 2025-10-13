@@ -11,6 +11,8 @@ const DEFAULT_MIN_RATES = {
 
 const DEFAULT_ALLOWED_UPDATES = ['message', 'callback_query', 'chat_member', 'my_chat_member'];
 
+export const MIN_CAP = 25;
+
 const trim = (value) => (typeof value === 'string' ? value.trim() : value);
 
 function requireEnv(env, name, { alias } = {}) {
@@ -134,6 +136,7 @@ export function buildConfig(env = process.env) {
     nodeEnv: trim(env.NODE_ENV) || undefined,
     webhookPath,
     MIN_RATES: DEFAULT_MIN_RATES,
+    MIN_CAP,
     adsMasters,
     linkCaptureDisabled,
   };
