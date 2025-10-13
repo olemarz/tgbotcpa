@@ -11,6 +11,8 @@ import { buildTrackingUrl } from '../utils/tracking-link.js';
 
 const logPrefix = '[adsWizard]';
 
+export const ADS_WIZARD_ID = 'ads-wizard';
+
 const eventLabels = {
   [EVENT_TYPES.join_group]: 'Вступление в группу/канал',
   [EVENT_TYPES.forward]: 'Пересылка сообщения',
@@ -315,7 +317,7 @@ async function finishAndSend(ctx, offerId) {
 }
 
 export const adsWizardScene = new Scenes.WizardScene(
-  'ads-wizard',
+  ADS_WIZARD_ID,
   async (ctx) => {
     try {
       console.log('[WIZARD] enter step1, from=', ctx.from?.id);
@@ -449,7 +451,7 @@ export async function initializeAdsWizard(ctx) {
 
 adsWizardScene.enter(initializeAdsWizard);
 
-export const startAdsWizard = (ctx) => ctx.scene.enter('ads-wizard');
+export const startAdsWizard = (ctx) => ctx.scene.enter(ADS_WIZARD_ID);
 
 export default adsWizardScene;
 
@@ -458,10 +460,9 @@ if (typeof adsWizardScene === 'undefined' || typeof startAdsWizard !== 'function
 }
 
 queueMicrotask(() => {
-  try {
-    // к этому моменту константы уже инициализированы
-    console.log('[BOOT] adsWizard LOADED, TOTAL_INPUT_STEPS=', TOTAL_INPUT_STEPS);
-  } catch (e) {
-    console.log('[BOOT] adsWizard LOADED (no steps yet)');
-  }
+  console.log(
+    '[BOOT] adsWizard LOADED, id=%s, steps=%s',
+    ADS_WIZARD_ID,
+    typeof TOTAL_INPUT_STEPS !== 'undefined' ? TOTAL_INPUT_STEPS : 'n/a'
+  );
 });

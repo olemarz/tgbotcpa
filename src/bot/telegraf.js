@@ -447,4 +447,14 @@ bot.command('ads', async (ctx, next) => {
   return next();
 });
 
-bot.command(['ads', 'add', 'ads2', 'ads3'], (ctx) => startAdsWizard(ctx));
+console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
+bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
+  try {
+    console.log('[ADS] startAdsWizard invoked, hasScene=', !!ctx.scene);
+    await startAdsWizard(ctx);
+    console.log('[ADS] ctx.scene.enter resolved');
+  } catch (e) {
+    console.error('[ADS] start error:', e?.message || e, e?.stack || '');
+    await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
+  }
+});
