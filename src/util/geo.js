@@ -16,6 +16,7 @@ const GEO_GROUP_ALIASES = new Map(
     worldwide: 'WW',
     global: 'WW',
     'весь мир': 'WW',
+    all: 'WW',
   })
 );
 
@@ -122,38 +123,69 @@ export function normalizeToISO2(value) {
 
 export function parseGeoInput(input) {
   if (!input || typeof input !== 'string') {
-    return [];
+    return { ok: true, codes: [], invalid: [] };
   }
 
-  const result = new Set();
   const parts = input
     .split(/[,;\n]/)
     .map((part) => part.trim())
     .filter(Boolean);
 
+  if (!parts.length) {
+    return { ok: true, codes: [], invalid: [] };
+  }
+
+  const result = new Set();
+  const invalid = new Set();
+  let hasWorldwide = false;
+
   for (const part of parts) {
-    const normalized = normalizeToISO2(part);
-    if (!normalized) {
+    if (part === '0') {
+      hasWorldwide = true;
       continue;
     }
-    if (GEO_GROUPS[normalized]) {
-      if (normalized === 'WW') {
-        result.clear();
-        result.add('WW');
-        break;
+
+    if (/^all$/i.test(part)) {
+      hasWorldwide = true;
+      continue;
+    }
+
+    const normalized = normalizeToISO2(part);
+    if (!normalized) {
+      const normalizedToken = normalizeToken(part);
+      const invalidToken = normalizedToken ? normalizedToken.toUpperCase() : part.toUpperCase();
+      if (invalidToken) {
+        invalid.add(invalidToken);
       }
+      continue;
+    }
+
+    if (normalized === 'WW') {
+      hasWorldwide = true;
+      break;
+    }
+
+    if (GEO_GROUPS[normalized]) {
       for (const code of GEO_GROUPS[normalized]) {
         result.add(code);
       }
       continue;
     }
-    if (result.has('WW')) {
-      continue;
+
+    if (!result.has('WW')) {
+      result.add(normalized);
     }
-    result.add(normalized);
   }
 
-  return Array.from(result);
+  if (invalid.size > 0) {
+    return { ok: false, codes: Array.from(result), invalid: Array.from(invalid) };
+  }
+
+  if (hasWorldwide || result.has('WW')) {
+    return { ok: true, codes: ['WW'], invalid: [] };
+  }
+
+  return { ok: true, codes: Array.from(result), invalid: [] };
 }
 
 export function isAllowedByGeo(geoList, country) {

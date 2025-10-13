@@ -204,7 +204,7 @@ function mapAliasToCodes(token) {
 
 export function parseGeoInput(text = '') {
   if (typeof text !== 'string') {
-    return { valid: [], invalid: [] };
+    return { ok: true, codes: [], invalid: [] };
   }
 
   const tokens = String(text)
@@ -212,11 +212,21 @@ export function parseGeoInput(text = '') {
     .map((token) => token.trim())
     .filter(Boolean);
 
+  if (!tokens.length) {
+    return { ok: true, codes: [], invalid: [] };
+  }
+
   const validSet = new Set();
   const invalidSet = new Set();
+  let hasAllToken = false;
 
   for (const token of tokens) {
     const upper = token.toUpperCase();
+    if (upper === 'ALL') {
+      hasAllToken = true;
+      continue;
+    }
+
     let codes = [];
 
     if (ZONE_MAP[upper]) {
@@ -253,7 +263,13 @@ export function parseGeoInput(text = '') {
     }
   }
 
-  const valid = Array.from(validSet);
-  const invalid = Array.from(invalidSet).filter((code) => !validSet.has(code));
-  return { valid, invalid };
+  if (invalidSet.size > 0) {
+    return { ok: false, codes: Array.from(validSet), invalid: Array.from(invalidSet) };
+  }
+
+  if (hasAllToken) {
+    return { ok: true, codes: [], invalid: [] };
+  }
+
+  return { ok: true, codes: Array.from(validSet), invalid: [] };
 }
