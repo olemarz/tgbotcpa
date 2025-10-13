@@ -19,21 +19,13 @@ const stage = new Scenes.Stage([adsWizardScene]);
 bot.use(session());
 bot.use(stage.middleware()); // ← всегда до link-capture
 
-// guard для /ads (если оставляешь) тут
+// guard для /ads: реагируем только на /ads (и его алиасы), без ложных срабатываний
 bot.use(async (ctx, next) => {
-  const msg = ctx.update?.message;
-  const txt = msg?.text || '';
+  const txt = ctx.update?.message?.text || '';
 
-  const ents = Array.isArray(msg?.entities) ? msg.entities : [];
-  const cmdEnt = ents.find(e => e.type === 'bot_command' && e.offset === 0);
-  const hasCmdEntity = !!cmdEnt && txt.startsWith('/');
-
-  const looksLikeAds = /^\/ads(?:@[\w_]+)?(?:\s|$)/i.test(txt);
-
-  if ((hasCmdEntity && /^\/ads/i.test(txt)) || looksLikeAds) {
-    console.log('[GUARD] /ads matched → start wizard | text=%j ents=%j', txt, ents);
+  if (/^\/ads(?:@[\w_]+)?(?:\s|$)/i.test(txt)) {
+    console.log('[GUARD] /ads matched → start wizard | text=%j', txt);
     try {
-      // передаём INIT-STATE корректно вторым аргументом
       const init = {};
       return await startAdsWizard(ctx, init || {});
     } catch (e) {
@@ -177,6 +169,21 @@ export async function handleStartWithToken(ctx, rawToken) {
   await ctx.reply('Новая задача доступна: /ads');
 }
 
+export async function handleClaimCommand(ctx) {
+  logUpdate(ctx, 'claim');
+  const text = ctx.message?.text ?? '';
+  const match =
+    typeof text === 'string' ? text.match(/^\/claim(?:@[\w_]+)?\s+(\S+)/i) : null;
+
+  if (!match) {
+    await ctx.reply('Пришлите токен командой: /claim <TOKEN>');
+    return;
+  }
+
+  const token = match[1];
+  return handleStartWithToken(ctx, token);
+}
+
 bot.start(async (ctx) => {
   logUpdate(ctx, 'start');
   let token = ctx.startPayload?.trim();
@@ -193,20 +200,7 @@ bot.start(async (ctx) => {
 });
 
 // ручной фолбэк для QA: /claim TOKEN
-bot.command('claim', async (ctx) => {
-  logUpdate(ctx, 'claim');
-  const text = ctx.message?.text ?? '';
-  const match =
-    typeof text === 'string' ? text.match(/^\/claim(?:@[\w_]+)?\s+(\S+)/i) : null;
-
-  if (!match) {
-    await ctx.reply('Пришлите токен командой: /claim <TOKEN>');
-    return;
-  }
-
-  const token = match[1];
-  return handleStartWithToken(ctx, token);
-});
+bot.command('claim', handleClaimCommand);
 
 // QA shortcut: /go OFFER_ID [uid]
 bot.hears(/^\/go\s+([0-9a-f-]{36})(?:\s+(\S+))?$/i, async (ctx) => {
