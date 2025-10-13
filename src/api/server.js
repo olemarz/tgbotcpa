@@ -35,50 +35,32 @@ export async function createApp() {
   return app;
 }
 
-const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+let server;
 
-if (isMainModule) {
-  const portRaw = process.env.PORT;
-  const port = Number.parseInt(portRaw ?? '', 10);
-  const listenPort = Number.isFinite(port) && port > 0 ? port : 3000;
-  const socketPath = (process.env.SOCK_PATH || '/tmp/tg-api.sock').trim();
+export async function startServer() {
+  const app = await createApp();
+  const PORT = Number(process.env.PORT || 8000);
 
-  const startServer = async () => {
-    const app = await createApp();
+  if (server?.listening) return server;
 
-    if (socketPath) {
-      try {
-        unlinkSync(socketPath);
-      } catch (error) {
-        if (error?.code !== 'ENOENT') {
-          throw error;
-        }
-      }
+  server = app.listen(PORT, () => {
+    console.log('[HTTP] listening on', PORT);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error('[HTTP] PORT in use:', PORT, '→ skip listen (another instance running?)');
+      return;
     }
+    throw err;
+  });
 
-    const listenTarget = socketPath ? { path: socketPath } : listenPort;
-    const humanReadableTarget = socketPath || `:${listenPort}`;
+  return server;
+}
 
-    const server = app.listen(listenTarget, () => console.log(`[api] Listening on ${humanReadableTarget}`));
-
-    if (socketPath) {
-      const cleanup = () => {
-        try {
-          unlinkSync(socketPath);
-        } catch (error) {
-          if (error?.code !== 'ENOENT') {
-            console.error(`[api] Failed to cleanup socket ${socketPath}`, error);
-          }
-        }
-      };
-
-      process.once('exit', cleanup);
-      server.on('close', cleanup);
-    }
-  };
-
-  startServer().catch((error) => {
-    console.error('[api] Failed to start server', error);
-    process.exitCode = 1;
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startServer().catch((e) => {
+    console.error('[HTTP] start error:', e);
+    process.exit(1);
   });
 }
