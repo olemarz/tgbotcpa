@@ -332,28 +332,31 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   );
   if (!r.rowCount) return;
 
-  const { id: attrId, click_id, offer_id, uid } = r.rows[0];
+  const { click_id: attrClickId, offer_id, uid } = r.rows[0];
   const existing = await query(
     `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
     [offer_id, tgId, JOIN_GROUP_EVENT],
   );
   if (existing.rowCount) {
-    await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attrId]);
+    await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
     return;
   }
 
   await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offer_id, tgId, JOIN_GROUP_EVENT]);
-  const updated = await query(
-    `UPDATE attribution SET state='converted' WHERE id=$1 RETURNING id`,
-    [attrId],
-  );
+  const updated = await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
 
   if (!updated.rowCount) {
     return;
   }
 
   try {
-    await sendPostback({ offer_id, tg_id: tgId, uid, click_id, event: JOIN_GROUP_EVENT });
+    await sendPostback({
+      offer_id,
+      tg_id: tgId,
+      uid,
+      click_id: attrClickId,
+      event: JOIN_GROUP_EVENT,
+    });
   } catch (e) {
     console.error('postback error:', e?.message || e);
   }
