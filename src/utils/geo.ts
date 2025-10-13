@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { ISO_ALPHA3_TO_ALPHA2 } from './iso3166.js';
 
 type GeoMode = string | null | undefined;
 type GeoList = readonly string[] | string | null | undefined;
@@ -64,6 +65,13 @@ const ZONE_MAP = {
   EU: EU_CODES,
   US: ['US'] as const,
 } as const;
+
+const ISO2_CODES = new Set<string>(Object.values(ISO_ALPHA3_TO_ALPHA2));
+for (const codes of Object.values(ZONE_MAP)) {
+  for (const code of codes) {
+    ISO2_CODES.add(code);
+  }
+}
 
 const ZONE_ALIASES = new Map<string, keyof typeof ZONE_MAP>(
   Object.entries({
@@ -215,52 +223,67 @@ function mapAliasToCodes(token: string): readonly string[] | null {
   return null;
 }
 
-export function parseGeoInput(input: string): string[] {
+export interface GeoParseResult {
+  valid: string[];
+  invalid: string[];
+}
+
+export function parseGeoInput(input: string): GeoParseResult {
   if (typeof input !== 'string') {
-    throw new Error('Введите список стран или зон через запятую.');
+    return { valid: [], invalid: [] };
   }
 
-  const parts = input
-    .split(',')
+  const tokens = String(input)
+    .split(/[^\p{L}\p{N}]+/u)
     .map((part) => part.trim())
     .filter(Boolean);
 
-  if (!parts.length) {
-    throw new Error('Введите список стран или зон через запятую.');
-  }
+  const valid = new Set<string>();
+  const invalid = new Set<string>();
 
-  const result: string[] = [];
-  const seen = new Set<string>();
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    const upper = trimmed.toUpperCase();
-    let codes: readonly string[] | null = null;
+  for (const token of tokens) {
+    const upper = token.toUpperCase();
+    let codes: readonly string[] = [];
 
     if (ZONE_MAP[upper as keyof typeof ZONE_MAP]) {
       codes = ZONE_MAP[upper as keyof typeof ZONE_MAP];
-    } else if (/^[A-Z]{2}$/.test(upper)) {
+    } else if (upper.length === 2 && ISO2_CODES.has(upper)) {
       codes = [upper];
+    } else if (upper.length === 3) {
+      const iso2 = ISO_ALPHA3_TO_ALPHA2[upper as keyof typeof ISO_ALPHA3_TO_ALPHA2];
+      if (iso2) {
+        codes = [iso2];
+      }
     } else {
-      const mapped = mapAliasToCodes(trimmed);
-      codes = mapped ?? null;
-    }
-
-    if (!codes || !codes.length) {
-      throw new Error(`Не удалось распознать гео: ${part}`);
-    }
-
-    for (const code of codes) {
-      if (!seen.has(code)) {
-        seen.add(code);
-        result.push(code);
+      const mapped = mapAliasToCodes(token);
+      if (mapped && mapped.length) {
+        codes = mapped;
       }
     }
+
+    if (!codes.length) {
+      invalid.add(upper);
+      continue;
+    }
+
+    let hasValid = false;
+    for (const code of codes) {
+      const isoCode = code.toUpperCase();
+      if (ISO2_CODES.has(isoCode)) {
+        valid.add(isoCode);
+        hasValid = true;
+      } else {
+        invalid.add(isoCode);
+      }
+    }
+
+    if (!hasValid) {
+      invalid.add(upper);
+    }
   }
 
-  if (!result.length) {
-    throw new Error('Введите хотя бы одну страну или зону.');
-  }
+  const validList = Array.from(valid);
+  const invalidList = Array.from(invalid).filter((code) => !valid.has(code));
 
-  return result;
+  return { valid: validList, invalid: invalidList };
 }
