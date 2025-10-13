@@ -38,7 +38,7 @@ bot.use(async (ctx, next) => {
   const txt = ctx.update?.message?.text || '';
 
   if (/^\/ads(?:@[\w_]+)?(?:\s|$)/i.test(txt)) {
-    console.log('[GUARD] /ads matched → start wizard | text=%j', txt);
+    console.log('[GUARD] /ads matched → start wizard | text="%s"', txt);
     try {
       const init = {};
       return await startAdsWizard(ctx, init || {});
