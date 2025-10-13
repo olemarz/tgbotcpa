@@ -8,7 +8,7 @@ import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
-import { Telegraf, Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session, Markup } from 'telegraf';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 
@@ -17,6 +17,18 @@ export const bot = new Telegraf(token);
 
 // ---- Scenes
 const stage = new Scenes.Stage([adsWizardScene]);
+
+const ADMIN_IDS = new Set(
+  (process.env.ADMIN_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+function isAdmin(ctx) {
+  const id = ctx.from?.id;
+  return id != null && ADMIN_IDS.has(String(id));
+}
 
 bot.use(
   session({
@@ -33,7 +45,45 @@ bot.use(
 );
 bot.use(stage.middleware()); // ← всегда до link-capture
 
-// guard для /ads: реагируем только на /ads (и его алиасы), без ложных срабатываний
+// /start: если есть payload — оставляем текущее поведение (handleStartWithToken),
+// иначе выводим приветствие с командами. Админ видит расширенный набор.
+bot.start(async (ctx) => {
+  const rawPayload = ctx.startPayload;
+  if (typeof rawPayload === 'string' && rawPayload.trim()) {
+    // существующая логика старта с токеном
+    return handleStartWithToken(ctx, rawPayload);
+  }
+
+  const admin = isAdmin(ctx);
+
+  const userText =
+    '👋 *Бот на вебхуке готов\\.*\n' +
+    'Доступные команды для рекламодателя:\n' +
+    '• `/ads` — разместить оффер \(мастер\)\n' +
+    '• `/claim \<TOKEN\>` — привязать оффер по токену\n' +
+    '• `/whoami` — показать ваш Telegram ID';
+
+  const adminText =
+    '🛠 *Режим администратора\\.*\n' +
+    'Дополнительные команды \(пока-заглушки\):\n' +
+    '• `/offers` — управление офферами\n' +
+    '• `/stats` — сводная статистика\n' +
+    '• `/broadcast` — рассылка\n\n' +
+    userText;
+
+  // Кнопки для удобства
+  const kb = admin
+    ? Markup.keyboard([
+        ['/ads', '/whoami'],
+        ['/offers', '/stats'],
+        ['/broadcast'],
+      ]).resize()
+    : Markup.keyboard([['/ads', '/whoami']]).resize();
+
+  await ctx.replyWithMarkdownV2(admin ? adminText : userText, kb);
+});
+
+// guard для /ads: реагируем только на /ads (и его упоминание), без ложных срабатываний
 bot.use(async (ctx, next) => {
   const txt = ctx.update?.message?.text || '';
 
@@ -50,15 +100,6 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
-  const { default: linkCapture } = await import('./link-capture.js');
-  bot.use(linkCapture()); // ← после stage
-} else {
-  console.log('[BOOT] link-capture DISABLED');
-}
-bot.use(session());
-bot.use(stage.middleware());
-
 // ---- Команды мастера
 console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
 bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
@@ -72,18 +113,6 @@ bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
     await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
   }
 });
-
-// ---- Гвард: явная команда /ads (включая упоминание бота)
-bot.use(async (ctx, next) => {
-  const txt = ctx.update?.message?.text ?? '';
-  if (typeof txt === 'string' && /^\/ads(@\w+)?(\s|$)/i.test(txt)) {
-    return startAdsWizard(ctx);
-  }
-  return next();
-});
-
-// ВНИМАНИЕ: link-capture и прочие парсеры — ТОЛЬКО ПОСЛЕ команд /ads
-// bot.use(linkCaptureMiddleware);   // при необходимости — ниже по цепочке
 
 if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   const { default: linkCapture } = await import('./link-capture.js');
