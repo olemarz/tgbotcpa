@@ -95,22 +95,37 @@ bot.use(async (ctx, next) => {
 });
 // ===== /TRACE =====
 
-// sanity: есть ли ctx.scene?
-bot.use(async (ctx, next) => {
-  if (!ctx.scene) console.warn('[WARN] ctx.scene is undefined (stage.middleware not mounted?)');
-  return next();
-});
+export const webhookCallback = bot.webhookCallback(
+  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
+  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() },
+);
 
-// глобальный catcher
-bot.catch((err, ctx) => {
-  console.error('[TELEGRAF] error in update', ctx.update?.update_id, err);
-});
+const stage = new Scenes.Stage([adsWizardScene]);
 
+// 1) session
+bot.use(session());
+
+// 2) stage
+bot.use(stage.middleware());
+
+// 3) guard для /ads
 bot.use((ctx, next) => {
-  const t = ctx.update?.message?.text;
-  if (typeof t === 'string' && t.startsWith('/')) return next();
+  const t = ctx.update?.message?.text || '';
+  if (/^\/ads(\b|@[\w_]+)?(\s|$)/i.test(t)) {
+    console.log('[GUARD] force adsWizard for /ads');
+    return startAdsWizard(ctx);
+  }
   return next();
 });
+
+// 4) link-capture (если не отключён)
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  const linkCaptureModule = await import('./link-capture.js');
+  const linkCapture = linkCaptureModule.default || linkCaptureModule;
+  bot.use(linkCapture());
+} else {
+  console.log('[BOOT] link-capture DISABLED');
+}
 
 export function logUpdate(ctx, tag = 'update') {
   const u = ctx.update || {};
