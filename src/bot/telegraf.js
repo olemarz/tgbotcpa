@@ -2,8 +2,7 @@ console.log('[BOOT] telegraf START | APP_VERSION=', process.env.APP_VERSION || '
 
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { Telegraf } from 'telegraf';
-import { Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session } from 'telegraf';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
@@ -14,7 +13,7 @@ import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
 
 // ---- Инициализация бота ----
-const token = process.env.BOT_TOKEN;
+const token = (process.env.BOT_TOKEN || '').trim();
 if (!token) {
   throw new Error('BOT_TOKEN is required');
 }
@@ -22,6 +21,11 @@ if (!token) {
 export const bot = new Telegraf(token, {
   handlerTimeout: 10000,
 });
+
+export const webhookCallback = bot.webhookCallback(
+  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
+  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() },
+);
 
 const stage = new Scenes.Stage([adsWizardScene]);
 bot.use(session());

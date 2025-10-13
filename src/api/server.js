@@ -1,76 +1,55 @@
+/* eslint-disable no-console */
 import 'dotenv/config';
 import express from 'express';
-import { unlinkSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { bot } from '../bot/telegraf.js';
-import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
-import { createApp as createCoreApp } from './app.js';
+import { webhookCallback, bot } from '../bot/telegraf.js';
 
-const WEBHOOK_PATH_DEFAULT = '/bot/webhook';
-const WEBHOOK_SECRET_DEFAULT = 'prod-secret';
+void bot; // ensure bot is initialized for webhook processing
 
 export async function createApp() {
-  const app = createCoreApp();
+  const app = express();
 
-  const webhookPath = (process.env.WEBHOOK_PATH || WEBHOOK_PATH_DEFAULT).trim() || WEBHOOK_PATH_DEFAULT;
-  const webhookSecret = (process.env.WEBHOOK_SECRET || WEBHOOK_SECRET_DEFAULT).trim() || WEBHOOK_SECRET_DEFAULT;
+  // 1) health
+  app.get('/health', (_req, res) => res.json({ ok: true }));
 
-  const webhookCallback = bot.webhookCallback(webhookPath, { secretToken: webhookSecret });
+  // 2) Точный маршрут вебхука (должен совпадать с WEBHOOK_PATH из .env)
+  const WEBHOOK_PATH = (process.env.WEBHOOK_PATH || '/bot/webhook').trim();
 
+  // 3) Логи входящих апдейтов (диагностика 404)
   app.post(
-    webhookPath,
+    WEBHOOK_PATH,
     express.json(),
-    (req, _res, next) => {
-      console.log(
-        '[WEBHOOK] update_id=',
-        req.body?.update_id,
-        'types=',
-        Object.keys(req.body || {})
-      );
+    (req, res, next) => {
+      console.log('[WEBHOOK] hit', WEBHOOK_PATH, 'update_id=', req.body?.update_id);
       next();
     },
-    webhookCallback
+
+    // 4) Telegraf webhook с секретом (если задан)
+    webhookCallback, // уже создан в telegraf.js: bot.webhookCallback(WEBHOOK_PATH, { secretToken: ... })
   );
 
-  if (app._router?.stack) {
-    app._router.stack = app._router.stack.filter((layer) => layer.route?.path !== '/health');
-  }
-
-  app.get('/health', (_req, res) => {
-    res.json({ ok: true, version: { commit: COMMIT, branch: BRANCH, built_at: BUILT_AT } });
-  });
-
-  console.log(`[App version] commit=${COMMIT} branch=${BRANCH} built_at=${BUILT_AT}`);
+  // 5) 404
+  app.use((_req, res) => res.status(404).json({ ok: false, error: 'not found' }));
 
   return app;
 }
 
 let server;
-
 export async function startServer() {
   const app = await createApp();
   const PORT = Number(process.env.PORT || 8000);
-
   if (server?.listening) return server;
 
-  server = app.listen(PORT, () => {
-    console.log('[HTTP] listening on', PORT);
-  });
-
+  server = app.listen(PORT, () => console.log('[HTTP] listening on', PORT));
   server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error('[HTTP] PORT in use:', PORT, '→ skip listen (another instance running?)');
+    if (err?.code === 'EADDRINUSE') {
+      console.error('[HTTP] PORT in use:', PORT, '→ skip listen (Nginx proxy ok)');
       return;
     }
     throw err;
   });
-
   return server;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  startServer().catch((e) => {
-    console.error('[HTTP] start error:', e);
-    process.exit(1);
-  });
+  startServer().catch((e) => { console.error('[HTTP] start error:', e); process.exit(1); });
 }
