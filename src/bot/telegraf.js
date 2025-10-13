@@ -9,6 +9,7 @@ import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
 import { Telegraf, Scenes, session } from 'telegraf';
+import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 
 const token = (process.env.BOT_TOKEN || '').trim();
@@ -16,6 +17,45 @@ export const bot = new Telegraf(token);
 
 // ---- Scenes
 const stage = new Scenes.Stage([adsWizardScene]);
+
+bot.use(
+  session({
+    store: sessionStore,
+    getSessionKey(ctx) {
+      const fromId = ctx.from?.id;
+      if (!['string', 'number', 'bigint'].includes(typeof fromId)) {
+        return undefined;
+      }
+      const key = String(fromId);
+      return /^[0-9]+$/.test(key) ? key : undefined;
+    },
+  })
+);
+bot.use(stage.middleware()); // ← всегда до link-capture
+
+// guard для /ads: реагируем только на /ads (и его алиасы), без ложных срабатываний
+bot.use(async (ctx, next) => {
+  const txt = ctx.update?.message?.text || '';
+
+  if (/^\/ads(?:@[\w_]+)?(?:\s|$)/i.test(txt)) {
+    console.log('[GUARD] /ads matched → start wizard | text=%j', txt);
+    try {
+      const init = {};
+      return await startAdsWizard(ctx, init || {});
+    } catch (e) {
+      console.error('[GUARD] startAdsWizard error:', e?.message || e);
+      // не блокируем цепочку даже при ошибке
+    }
+  }
+  return next();
+});
+
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  const { default: linkCapture } = await import('./link-capture.js');
+  bot.use(linkCapture()); // ← после stage
+} else {
+  console.log('[BOOT] link-capture DISABLED');
+}
 bot.use(session());
 bot.use(stage.middleware());
 
