@@ -146,17 +146,16 @@ function normalizeTelegramUrl(raw) {
   } catch { return null; }
 }
 
-function resetWizardState(ctx) {
+function initializeWizardState(ctx) {
   const sceneState = ctx.scene?.state;
-  const stateFromScene = sceneState && typeof sceneState === 'object' ? sceneState : {};
-  const offerState = stateFromScene.offer && typeof stateFromScene.offer === 'object'
-    ? stateFromScene.offer
-    : {};
-
-  ctx.wizard.state = {
-    ...stateFromScene,
-    offer: { ...offerState },
+  const baseState = sceneState && typeof sceneState === 'object' ? { ...sceneState } : {};
+  const baseOffer = baseState.offer && typeof baseState.offer === 'object' ? baseState.offer : {};
+  const nextState = {
+    ...baseState,
+    offer: { ...baseOffer },
   };
+  ctx.wizard.state = nextState;
+  ctx.scene.state = nextState;
 }
 
 function markStepPrompted(ctx) {
@@ -475,14 +474,22 @@ export const adsWizardScene = new Scenes.WizardScene(
 );
 
 export async function initializeAdsWizard(ctx) {
-  resetWizardState(ctx);
+  initializeWizardState(ctx);
   await goToStep(ctx, Step.TARGET_URL);
 }
 
 adsWizardScene.enter(initializeAdsWizard);
 
-export const startAdsWizard = (ctx, init = {}) =>
-  ctx.scene.enter(ADS_WIZARD_ID, init && typeof init === 'object' ? init : {});
+export const startAdsWizard = (ctx, init = {}) => {
+  const safeInit = init && typeof init === 'object' ? { ...init } : {};
+  return ctx.scene.enter(ADS_WIZARD_ID, safeInit);
+};
+
+export default adsWizardScene;
+
+if (typeof adsWizardScene === 'undefined' || typeof startAdsWizard !== 'function') {
+  console.error('[adsWizard] bad export', { hasScene: !!adsWizardScene, hasStart: typeof startAdsWizard });
+}
 
 queueMicrotask(() => {
   console.log('[BOOT] adsWizard LOADED, id=%s', ADS_WIZARD_ID);
