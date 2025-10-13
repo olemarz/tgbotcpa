@@ -2,7 +2,6 @@ console.log('[BOOT] telegraf START | APP_VERSION=', process.env.APP_VERSION || '
 
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { createRequire } from 'node:module';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
@@ -66,13 +65,6 @@ bot.command(['ads','add','ads2','ads3'], async (ctx) => {
   }
 });
 
-export const webhookCallback = bot.webhookCallback(
-  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
-  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() }
-);
-
-const require = createRequire(import.meta.url);
-
 // ---- Инициализация бота ----
 if (!token) {
   throw new Error('BOT_TOKEN is required');
@@ -94,38 +86,6 @@ bot.use(async (ctx, next) => {
   }
 });
 // ===== /TRACE =====
-
-export const webhookCallback = bot.webhookCallback(
-  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
-  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() },
-);
-
-const stage = new Scenes.Stage([adsWizardScene]);
-
-// 1) session
-bot.use(session());
-
-// 2) stage
-bot.use(stage.middleware());
-
-// 3) guard для /ads
-bot.use((ctx, next) => {
-  const t = ctx.update?.message?.text || '';
-  if (/^\/ads(\b|@[\w_]+)?(\s|$)/i.test(t)) {
-    console.log('[GUARD] force adsWizard for /ads');
-    return startAdsWizard(ctx);
-  }
-  return next();
-});
-
-// 4) link-capture (если не отключён)
-if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
-  const linkCaptureModule = await import('./link-capture.js');
-  const linkCapture = linkCaptureModule.default || linkCaptureModule;
-  bot.use(linkCapture());
-} else {
-  console.log('[BOOT] link-capture DISABLED');
-}
 
 export function logUpdate(ctx, tag = 'update') {
   const u = ctx.update || {};
@@ -489,5 +449,10 @@ function safeStop(reason) {
 
 process.once('SIGINT', () => safeStop('SIGINT'));
 process.once('SIGTERM', () => safeStop('SIGTERM'));
+
+export const webhookCallback = bot.webhookCallback(
+  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
+  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() }
+);
 
 export default bot;
