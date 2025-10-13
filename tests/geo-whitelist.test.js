@@ -39,25 +39,41 @@ const EU_CODES = [
 
 describe('parseGeoInput', () => {
   it('expands CIS zone', () => {
-    assert.deepEqual(parseGeoInput('СНГ'), CIS_CODES);
+    const result = parseGeoInput('СНГ');
+    assert.deepEqual(result.valid, CIS_CODES);
+    assert.deepEqual(result.invalid, []);
   });
 
   it('expands Europe zone aliases', () => {
-    assert.deepEqual(parseGeoInput('Европа'), EU_CODES);
-    assert.deepEqual(parseGeoInput('EU'), EU_CODES);
+    const first = parseGeoInput('Европа');
+    const second = parseGeoInput('EU');
+    assert.deepEqual(first.valid, EU_CODES);
+    assert.deepEqual(first.invalid, []);
+    assert.deepEqual(second.valid, EU_CODES);
+    assert.deepEqual(second.invalid, []);
   });
 
   it('normalizes USA aliases', () => {
-    assert.deepEqual(parseGeoInput('США'), ['US']);
-    assert.deepEqual(parseGeoInput('USA'), ['US']);
+    const cyr = parseGeoInput('США');
+    const lat = parseGeoInput('USA');
+    assert.deepEqual(cyr.valid, ['US']);
+    assert.deepEqual(cyr.invalid, []);
+    assert.deepEqual(lat.valid, ['US']);
+    assert.deepEqual(lat.invalid, []);
   });
 
   it('parses country names and ISO codes', () => {
-    assert.deepEqual(parseGeoInput('Russia,Kazakhstan'), ['RU', 'KZ']);
-    assert.deepEqual(parseGeoInput('DE, FR'), ['DE', 'FR']);
+    const names = parseGeoInput('Russia,Kazakhstan');
+    const iso = parseGeoInput('DE, FR');
+    assert.deepEqual(names.valid, ['RU', 'KZ']);
+    assert.deepEqual(names.invalid, []);
+    assert.deepEqual(iso.valid, ['DE', 'FR']);
+    assert.deepEqual(iso.invalid, []);
   });
 
-  it('throws on unknown tokens', () => {
-    assert.throws(() => parseGeoInput('Атлантида'), /Не удалось распознать/);
+  it('marks unknown tokens as invalid', () => {
+    const result = parseGeoInput('Атлантида');
+    assert.deepEqual(result.valid, []);
+    assert.ok(result.invalid.length > 0);
   });
 });

@@ -437,15 +437,24 @@ async function step6(ctx) {
     ctx.wizard.state.offer.geo_input = null;
     delete ctx.wizard.state.offer.geo_list;
   } else {
-    try {
-      const parsed = parseGeoInput(raw);
-      ctx.wizard.state.offer.geo_mode = GEO.WHITELIST;
-      ctx.wizard.state.offer.geo_input = raw;
-      ctx.wizard.state.offer.geo_list = parsed;
-    } catch (e) {
-      await ctx.reply(`Не получилось разобрать гео. ${e?.message || ''} Попробуйте ещё раз.`);
+    const { valid, invalid } = parseGeoInput(raw);
+    if (!valid.length) {
+      await ctx.reply(
+        'Не распознано GEO. Пример: RU,UA,KZ\n' +
+          'Можно написать через запятую или пробел. Нужны ISO2-коды стран (2 буквы латиницей).',
+      );
       return;
     }
+    if (invalid.length) {
+      await ctx.reply(`Игнорируем неизвестные коды: ${invalid.join(', ')}`);
+    }
+    ctx.wizard.state.offer.geo_mode = GEO.WHITELIST;
+    ctx.wizard.state.offer.geo_input = raw;
+    ctx.wizard.state.offer.geo_list = valid;
+    await ctx.reply(
+      'Подсказка по GEO (топ страны): RU, UA, KZ, BY, UZ, AM, GE, AZ, KG, MD.\n' +
+        'Вводи коды через запятую (пример: RU,UA,KZ).',
+    );
   }
   return goToStep(ctx, Step.OFFER_NAME);
 }

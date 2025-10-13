@@ -69,6 +69,13 @@ const ZONE_MAP = {
   US: ['US'],
 };
 
+const ISO2_CODES = new Set(Object.values(ISO_ALPHA3_TO_ALPHA2));
+for (const codes of Object.values(ZONE_MAP)) {
+  for (const code of codes) {
+    ISO2_CODES.add(code);
+  }
+}
+
 function normalizeCountry(country) {
   if (!country) {
     return null;
@@ -195,57 +202,58 @@ function mapAliasToCodes(token) {
   return null;
 }
 
-export function parseGeoInput(input) {
-  if (typeof input !== 'string') {
-    throw new Error('Введите список стран или зон через запятую.');
+export function parseGeoInput(text = '') {
+  if (typeof text !== 'string') {
+    return { valid: [], invalid: [] };
   }
 
-  const parts = input
-    .split(',')
-    .map((part) => part.trim())
+  const tokens = String(text)
+    .split(/[^\p{L}\p{N}]+/gu)
+    .map((token) => token.trim())
     .filter(Boolean);
 
-  if (!parts.length) {
-    throw new Error('Введите список стран или зон через запятую.');
-  }
+  const validSet = new Set();
+  const invalidSet = new Set();
 
-  const result = [];
-  const seen = new Set();
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    const upper = trimmed.toUpperCase();
-    let codes = null;
+  for (const token of tokens) {
+    const upper = token.toUpperCase();
+    let codes = [];
 
     if (ZONE_MAP[upper]) {
       codes = ZONE_MAP[upper];
-    } else if (/^[A-Z]{2}$/.test(upper)) {
+    } else if (upper.length === 2 && ISO2_CODES.has(upper)) {
       codes = [upper];
-    } else if (/^[A-Z]{3}$/.test(upper)) {
-      const iso2 = ISO_ALPHA3_TO_ALPHA2[upper];
-      if (!iso2) {
-        throw new Error(`Не удалось распознать гео: ${part}`);
-      }
-      codes = [iso2];
+    } else if (upper.length === 3 && ISO_ALPHA3_TO_ALPHA2[upper]) {
+      codes = [ISO_ALPHA3_TO_ALPHA2[upper]];
     } else {
-      codes = mapAliasToCodes(trimmed);
-    }
-
-    if (!codes || !codes.length) {
-      throw new Error(`Не удалось распознать гео: ${part}`);
-    }
-
-    for (const code of codes) {
-      if (!seen.has(code)) {
-        seen.add(code);
-        result.push(code);
+      const mapped = mapAliasToCodes(token);
+      if (mapped && mapped.length) {
+        codes = mapped;
       }
     }
+
+    if (!codes.length) {
+      invalidSet.add(upper);
+      continue;
+    }
+
+    let hasValid = false;
+    for (const code of codes) {
+      const isoCode = code.toUpperCase();
+      if (ISO2_CODES.has(isoCode)) {
+        validSet.add(isoCode);
+        hasValid = true;
+      } else {
+        invalidSet.add(isoCode);
+      }
+    }
+
+    if (!hasValid) {
+      invalidSet.add(upper);
+    }
   }
 
-  if (!result.length) {
-    throw new Error('Введите хотя бы одну страну или зону.');
-  }
-
-  return result;
+  const valid = Array.from(validSet);
+  const invalid = Array.from(invalidSet).filter((code) => !validSet.has(code));
+  return { valid, invalid };
 }
