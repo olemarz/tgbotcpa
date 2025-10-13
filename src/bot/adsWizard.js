@@ -439,19 +439,13 @@ export async function initializeAdsWizard(ctx) {
 
 adsWizardScene.enter(initializeAdsWizard);
 
-export const startAdsWizard = async (ctx) => {
-  if (ctx.scene?.current?.id === 'ads-wizard') {
-    try {
-      return await ctx.scene.reenter();
-    } catch (error) {
-      console.error(`${logPrefix} failed to reenter wizard`, error?.message || error);
-      return ctx.reply('⚠️ Не удалось перезапустить мастер. Попробуйте ещё раз.');
-    }
-  }
-  return ctx.scene.enter('ads-wizard');
-};
+export const startAdsWizard = (ctx) => ctx.scene.enter('ads-wizard');
 
 export default adsWizardScene;
+
+if (typeof adsWizardScene === 'undefined' || typeof startAdsWizard !== 'function') {
+  console.error('[adsWizard] bad export', { hasScene: !!adsWizardScene, hasStart: typeof startAdsWizard });
+}
 
 queueMicrotask(() => {
   try {

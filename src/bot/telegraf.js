@@ -3,14 +3,16 @@ console.log('[BOOT] telegraf START | APP_VERSION=', process.env.APP_VERSION || '
 import 'dotenv/config';
 // src/bot/telegraf.js
 import { Telegraf, Scenes, session } from 'telegraf';
+import { createRequire } from 'node:module';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
-import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
+
+const require = createRequire(import.meta.url);
 
 // ---- Инициализация бота ----
 const token = (process.env.BOT_TOKEN || '').trim();
@@ -49,10 +51,19 @@ bot.use(stage.middleware());
 
 bot.use((ctx, next) => {
   const t = ctx.update?.message?.text;
-  if (typeof t === 'string' && /^\/ads(\b|$)/.test(t)) {
-    console.log('[GUARD] force start adsWizard for /ads');
+  if (typeof t === 'string' && /^\/ads(\b|@[\w_]+)?(\s|$)/i.test(t)) {
+    console.log('[GUARD] force adsWizard for /ads', {
+      text: ctx.update?.message?.text,
+      entities: ctx.update?.message?.entities,
+    });
     return startAdsWizard(ctx);
   }
+  return next();
+});
+
+bot.use((ctx, next) => {
+  const t = ctx.update?.message?.text;
+  if (typeof t === 'string' && t.startsWith('/')) return next();
   return next();
 });
 
@@ -62,6 +73,7 @@ export function logUpdate(ctx, tag = 'update') {
     types: Object.keys(u),
     from: ctx.from ? { id: ctx.from.id, is_bot: ctx.from.is_bot } : null,
     text: ctx.message?.text,
+    entities: ctx.message?.entities,
     startPayload: ctx.startPayload,
   });
 }
@@ -404,17 +416,12 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
   }
 });
 
-// Ловец ссылок должен идти после командных обработчиков
-if (process.env.DISABLE_LINK_CAPTURE === 'true') {
-  console.log('[BOOT] link-capture DISABLED');
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  const linkCaptureModule = require('./link-capture.js');
+  const linkCapture = linkCaptureModule.default || linkCaptureModule;
+  bot.use(linkCapture());
 } else {
-  const linkCapture = createLinkCaptureMiddleware();
-  bot.use((ctx, next) => {
-    const txt = ctx.update?.message?.text;
-    if (typeof txt === 'string' && txt.startsWith('/')) return next();
-    return linkCapture(ctx, next);
-  });
-  // bot.use(linkCapture()); // оставить как у тебя, но после прослойки
+  console.log('[BOOT] link-capture DISABLED');
 }
 
 // Безопасная остановка в webhook-режиме
@@ -436,4 +443,10 @@ if (String(startAdsWizard) === 'undefined' || typeof startAdsWizard !== 'functio
 }
 
 console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
+bot.command('ads', async (ctx, next) => {
+  console.log('[PING] /ads handler reached');
+  await ctx.reply('ads: pong');
+  return next();
+});
+
 bot.command(['ads', 'add', 'ads2', 'ads3'], (ctx) => startAdsWizard(ctx));
