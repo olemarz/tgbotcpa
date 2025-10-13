@@ -357,7 +357,7 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
 
   const r = await query(
     `
-    SELECT id, click_id, offer_id, uid
+    SELECT click_id, offer_id, uid
     FROM attribution
     WHERE tg_id=$1 AND state='started'
       AND created_at >= NOW() - INTERVAL '24 hours'
