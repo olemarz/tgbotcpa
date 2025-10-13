@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import { unlinkSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
 import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
@@ -40,10 +41,40 @@ if (isMainModule) {
   const portRaw = process.env.PORT;
   const port = Number.parseInt(portRaw ?? '', 10);
   const listenPort = Number.isFinite(port) && port > 0 ? port : 3000;
+  const socketPath = (process.env.SOCK_PATH || '/tmp/tg-api.sock').trim();
 
   const startServer = async () => {
     const app = await createApp();
-    app.listen(listenPort, () => console.log(`[api] Listening on :${listenPort}`));
+
+    if (socketPath) {
+      try {
+        unlinkSync(socketPath);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
+
+    const listenTarget = socketPath ? { path: socketPath } : listenPort;
+    const humanReadableTarget = socketPath || `:${listenPort}`;
+
+    const server = app.listen(listenTarget, () => console.log(`[api] Listening on ${humanReadableTarget}`));
+
+    if (socketPath) {
+      const cleanup = () => {
+        try {
+          unlinkSync(socketPath);
+        } catch (error) {
+          if (error?.code !== 'ENOENT') {
+            console.error(`[api] Failed to cleanup socket ${socketPath}`, error);
+          }
+        }
+      };
+
+      process.once('exit', cleanup);
+      server.on('close', cleanup);
+    }
   };
 
   startServer().catch((error) => {
