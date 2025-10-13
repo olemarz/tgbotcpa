@@ -35,7 +35,8 @@ bot.use(async (ctx, next) => {
     console.log('[GUARD] /ads matched → start wizard | text=%j ents=%j', txt, ents);
     try {
       // передаём INIT-STATE корректно вторым аргументом
-      return await startAdsWizard(ctx, {});
+      const init = {};
+      return await startAdsWizard(ctx, init || {});
     } catch (e) {
       console.error('[GUARD] startAdsWizard error:', e?.message || e);
       // не блокируем цепочку даже при ошибке
@@ -54,13 +55,14 @@ if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
 
 // 4) Командный алиас на мастер
 console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
-bot.command(['ads','add','ads2','ads3'], async (ctx) => {
+bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
   try {
     console.log('[ADS] startAdsWizard invoked, hasScene=', !!ctx.scene);
-    await startAdsWizard(ctx, {});
+    const init = {};
+    await startAdsWizard(ctx, init || {});
     console.log('[ADS] ctx.scene.enter resolved');
   } catch (e) {
-    console.error('[ADS] start error:', e?.message || e);
+    console.error('[ADS] start error:', e?.message, e?.stack || '');
     await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
   }
 });
@@ -435,6 +437,9 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
     await ctx.reply('⚠️ Произошла ошибка. Попробуйте позже.');
   }
 });
+
+bot.catch((err, ctx) => console.error('[TELEGRAF] error', ctx.update?.update_id, err?.stack || err));
+process.on('unhandledRejection', (e) => console.error('[UNHANDLED]', e?.stack || e));
 
 // Безопасная остановка в webhook-режиме
 function safeStop(reason) {

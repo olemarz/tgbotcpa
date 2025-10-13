@@ -146,17 +146,12 @@ function normalizeTelegramUrl(raw) {
   } catch { return null; }
 }
 
-async function initializeWizardState(ctx) {
-  const sceneState = ctx.scene?.state;
-  const baseState = sceneState && typeof sceneState === 'object' ? { ...sceneState } : {};
-  const baseOffer = baseState.offer && typeof baseState.offer === 'object' ? baseState.offer : {};
-  const nextState = {
-    ...baseState,
-    offer: { ...baseOffer },
-  };
-  ctx.wizard.state = nextState;
-  ctx.scene.state = nextState;
-  await goToStep(ctx, Step.TARGET_URL);
+function initializeWizardState(ctx) {
+  const scene = ctx.scene?.state ?? {};
+  const baseOffer = typeof scene.offer === 'object' && scene.offer ? scene.offer : {};
+  const next = { ...scene, offer: { ...baseOffer } };
+  ctx.wizard.state = next;
+  ctx.scene.state = next;
 }
 
 function markStepPrompted(ctx) {
@@ -327,6 +322,7 @@ async function finishAndSend(ctx, offerId) {
 
 async function step1(ctx) {
   ctx.wizard.state ||= {};
+  console.log('[WIZARD] step1 enter, stateKeys=', Object.keys(ctx.wizard.state || {}));
   if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') {
     ctx.wizard.state.offer = {};
   }
