@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "tg:info": "node scripts/tg-info.cjs",
     "start": "node src/api/server.js",
     "deploy:verify": "node -e \"console.log('commit=',require('child_process').execSync('git rev-parse --short HEAD').toString().trim())\"",
     "api": "node src/api/server.js",
