@@ -357,7 +357,7 @@ async function registerJoinConversion({ offerId, tgId, attribution }) {
   }
 
   await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offerId, tgId, JOIN_GROUP_EVENT]);
-  await query(`UPDATE attribution SET state='converted' WHERE id=$1`, [attribution.id]);
+  await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attribution.click_id]);
 
   try {
     await sendPostback({

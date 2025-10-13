@@ -129,10 +129,10 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       await query(`INSERT INTO events (offer_id, tg_id, type) VALUES ($1, $2, $3)`, [offerId, numericTgId, event]);
     }
 
-    const attribution = await query(`SELECT id FROM attribution WHERE click_id = $1 LIMIT 1`, [clickId]);
+    const attribution = await query(`SELECT 1 FROM attribution WHERE click_id = $1 LIMIT 1`, [clickId]);
 
     if (attribution.rowCount) {
-      await query(`UPDATE attribution SET state = 'converted' WHERE id = $1`, [attribution.rows[0].id]);
+      await query(`UPDATE attribution SET state = 'converted' WHERE click_id = $1`, [clickId]);
     } else {
       await query(
         `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1, $2, $3, $4, 'converted')`,
