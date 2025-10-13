@@ -154,27 +154,32 @@ function initializeWizardState(ctx) {
 
 function markStepPrompted(ctx) {
   const updateId = ctx.update?.update_id;
-  ctx.wizard.state.skipUpdate = updateId ?? true;
+  const scene = ctx.scene;
+  if (!scene) return;
+  const baseState = scene.state;
+  const state = baseState && typeof baseState === 'object' ? baseState : (scene.state = {});
+  state.skipUpdate = updateId ?? true;
 }
 
 function shouldSkipCurrentUpdate(ctx) {
-  const skipMark = ctx.wizard?.state?.skipUpdate;
+  const skipMark = ctx.scene?.state?.skipUpdate;
   if (skipMark === undefined) {
     return false;
   }
   const currentId = ctx.update?.update_id;
+  const state = ctx.scene?.state;
   if (skipMark === true || (typeof skipMark === 'number' && skipMark === currentId)) {
-    delete ctx.wizard.state.skipUpdate;
+    if (state && typeof state === 'object') delete state.skipUpdate;
     return true;
   }
   if (typeof skipMark === 'number' && currentId !== undefined) {
-    delete ctx.wizard.state.skipUpdate;
+    if (state && typeof state === 'object') delete state.skipUpdate;
   }
   return false;
 }
 
 async function goToStep(ctx, step) {
-  markStepPrompted(ctx);
+  if (ctx.scene) markStepPrompted(ctx);
   switch (step) {
     case Step.TARGET_URL:
       await promptTargetUrl(ctx);
