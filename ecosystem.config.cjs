@@ -1,15 +1,15 @@
 module.exports = {
   apps: [{
-    name: "tg-api",
-    cwd: "/opt/tgbotcpa",
-    script: "src/api/server.js",
-    interpreter: "node",
+    name: 'tg-api',
+    script: 'npm',
+    args: 'start',
+    instances: 1,
+    exec_mode: 'fork',
+    watch: false,
     env: {
-      APP_VERSION: String(Date.now()),
-      NODE_ENV: process.env.NODE_ENV || "production"
-    },
-    autorestart: true,
-    time: true,
-    max_memory_restart: "300M"
+      NODE_ENV: 'production',
+      PORT: 8000,
+      APP_VERSION: String(Date.now())
+    }
   }]
 };
