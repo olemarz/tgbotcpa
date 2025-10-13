@@ -47,8 +47,21 @@ export const webhookCallback = bot.webhookCallback(
 );
 
 const stage = new Scenes.Stage([adsWizardScene]);
+
+// ДОЛЖНО стоять до любых команд:
 bot.use(session());
 bot.use(stage.middleware());
+
+// sanity: есть ли ctx.scene?
+bot.use(async (ctx, next) => {
+  if (!ctx.scene) console.warn('[WARN] ctx.scene is undefined (stage.middleware not mounted?)');
+  return next();
+});
+
+// глобальный catcher
+bot.catch((err, ctx) => {
+  console.error('[TELEGRAF] error in update', ctx.update?.update_id, err);
+});
 
 // --- GUARD: поймать /ads в любом виде ещё до чужих миддлварей
 bot.use(async (ctx, next) => {
@@ -464,4 +477,14 @@ bot.command('ads', async (ctx, next) => {
   return next();
 });
 
-bot.command(['ads', 'add', 'ads2', 'ads3'], (ctx) => startAdsWizard(ctx));
+console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
+bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
+  try {
+    console.log('[ADS] startAdsWizard invoked, hasScene=', !!ctx.scene);
+    await startAdsWizard(ctx);
+    console.log('[ADS] ctx.scene.enter resolved');
+  } catch (e) {
+    console.error('[ADS] start error:', e?.message || e, e?.stack || '');
+    await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
+  }
+});
