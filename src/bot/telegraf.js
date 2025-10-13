@@ -15,6 +15,7 @@ import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 const token = (process.env.BOT_TOKEN || '').trim();
 export const bot = new Telegraf(token);
 
+// ---- Scenes
 const stage = new Scenes.Stage([adsWizardScene]);
 
 bot.use(
@@ -55,8 +56,10 @@ if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
 } else {
   console.log('[BOOT] link-capture DISABLED');
 }
+bot.use(session());
+bot.use(stage.middleware());
 
-// 4) Командный алиас на мастер
+// ---- Команды мастера
 console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
 bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
   try {
@@ -69,6 +72,25 @@ bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
     await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
   }
 });
+
+// ---- Гвард: явная команда /ads (включая упоминание бота)
+bot.use(async (ctx, next) => {
+  const txt = ctx.update?.message?.text ?? '';
+  if (typeof txt === 'string' && /^\/ads(@\w+)?(\s|$)/i.test(txt)) {
+    return startAdsWizard(ctx);
+  }
+  return next();
+});
+
+// ВНИМАНИЕ: link-capture и прочие парсеры — ТОЛЬКО ПОСЛЕ команд /ads
+// bot.use(linkCaptureMiddleware);   // при необходимости — ниже по цепочке
+
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  const { default: linkCapture } = await import('./link-capture.js');
+  bot.use(linkCapture()); // ← после stage
+} else {
+  console.log('[BOOT] link-capture DISABLED');
+}
 
 // ---- Инициализация бота ----
 if (!token) {
@@ -463,9 +485,9 @@ function safeStop(reason) {
 process.once('SIGINT', () => safeStop('SIGINT'));
 process.once('SIGTERM', () => safeStop('SIGTERM'));
 
-export const webhookCallback = bot.webhookCallback(
-  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
-  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() }
-);
+// ---- Webhook export (один раз, внизу файла)
+export const webhookCallback = bot.webhookCallback(process.env.WEBHOOK_PATH, {
+  secretToken: process.env.WEBHOOK_SECRET || 'prod-secret',
+});
 
 export default bot;
