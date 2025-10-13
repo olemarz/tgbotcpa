@@ -224,13 +224,14 @@ function mapAliasToCodes(token: string): readonly string[] | null {
 }
 
 export interface GeoParseResult {
-  valid: string[];
+  ok: boolean;
+  codes: string[];
   invalid: string[];
 }
 
 export function parseGeoInput(input: string): GeoParseResult {
   if (typeof input !== 'string') {
-    return { valid: [], invalid: [] };
+    return { ok: true, codes: [], invalid: [] };
   }
 
   const tokens = String(input)
@@ -238,11 +239,21 @@ export function parseGeoInput(input: string): GeoParseResult {
     .map((part) => part.trim())
     .filter(Boolean);
 
+  if (tokens.length === 0) {
+    return { ok: true, codes: [], invalid: [] };
+  }
+
   const valid = new Set<string>();
   const invalid = new Set<string>();
+  let hasAllToken = false;
 
   for (const token of tokens) {
     const upper = token.toUpperCase();
+    if (upper === 'ALL') {
+      hasAllToken = true;
+      continue;
+    }
+
     let codes: readonly string[] = [];
 
     if (ZONE_MAP[upper as keyof typeof ZONE_MAP]) {
@@ -282,8 +293,13 @@ export function parseGeoInput(input: string): GeoParseResult {
     }
   }
 
-  const validList = Array.from(valid);
-  const invalidList = Array.from(invalid).filter((code) => !valid.has(code));
+  if (invalid.size > 0) {
+    return { ok: false, codes: Array.from(valid), invalid: Array.from(invalid) };
+  }
 
-  return { valid: validList, invalid: invalidList };
+  if (hasAllToken) {
+    return { ok: true, codes: [], invalid: [] };
+  }
+
+  return { ok: true, codes: Array.from(valid), invalid: [] };
 }

@@ -437,25 +437,31 @@ async function step6(ctx) {
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.CAPS_TOTAL); return; }
   const raw = (getMessageText(ctx) || '').trim();
-  if (!raw || raw === '0' || /^без\s*огранич/i.test(raw)) {
+  if (!raw || raw === '0' || /^без\s*огранич/i.test(raw) || raw.toUpperCase() === 'ALL') {
     ctx.wizard.state.offer.geo_mode = GEO.ANY;
     ctx.wizard.state.offer.geo_input = null;
     delete ctx.wizard.state.offer.geo_list;
+    delete ctx.wizard.state.offer.geo;
   } else {
-    const { valid, invalid } = parseGeoInput(raw);
-    if (!valid.length) {
+    const { ok, codes, invalid = [] } = parseGeoInput(raw);
+    if (!ok) {
       await ctx.reply(
-        'Не распознано GEO. Пример: RU,UA,KZ\n' +
-          'Можно написать через запятую или пробел. Нужны ISO2-коды стран (2 буквы латиницей).',
+        `Неизвестные коды: ${invalid.join(', ')}. Пример: RU, KZ, US. Введите через запятую.`,
       );
       return;
     }
-    if (invalid.length) {
-      await ctx.reply(`Игнорируем неизвестные коды: ${invalid.join(', ')}`);
+    const normalizedCodes = Array.isArray(codes) ? codes : [];
+    if (normalizedCodes.length === 0) {
+      ctx.wizard.state.offer.geo_mode = GEO.ANY;
+      ctx.wizard.state.offer.geo_input = null;
+      delete ctx.wizard.state.offer.geo_list;
+      delete ctx.wizard.state.offer.geo;
+      return goToStep(ctx, Step.OFFER_NAME);
     }
     ctx.wizard.state.offer.geo_mode = GEO.WHITELIST;
     ctx.wizard.state.offer.geo_input = raw;
-    ctx.wizard.state.offer.geo_list = valid;
+    ctx.wizard.state.offer.geo_list = normalizedCodes;
+    ctx.wizard.state.offer.geo = normalizedCodes;
     await ctx.reply(
       'Подсказка по GEO (топ страны): RU, UA, KZ, BY, UZ, AM, GE, AZ, KG, MD.\n' +
         'Вводи коды через запятую (пример: RU,UA,KZ).',

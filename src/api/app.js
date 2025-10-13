@@ -70,18 +70,15 @@ export function createApp() {
 
     let geoList = [];
     if (geo_input) {
-      const { valid, invalid } = parseGeoInput(geo_input);
-      if (!valid.length) {
-        return res.status(400).json({ ok: false, error: 'geo_input must contain ISO2 country codes' });
-      }
-      if (invalid.length) {
+      const { ok: geoOk, codes = [], invalid = [] } = parseGeoInput(geo_input);
+      if (!geoOk) {
         return res.status(400).json({
           ok: false,
           error: `Unknown GEO codes: ${invalid.join(', ')}`,
           invalid_geo_codes: invalid,
         });
       }
-      geoList = valid;
+      geoList = Array.isArray(codes) ? codes : [];
     }
     const offerId = uuid();
 
