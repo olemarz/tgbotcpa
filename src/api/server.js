@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express from 'express';
-import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
 import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
 import { createApp as createCoreApp } from './app.js';
@@ -34,20 +33,32 @@ export async function createApp() {
   return app;
 }
 
-const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+let server;
 
-if (isMainModule) {
-  const portRaw = process.env.PORT;
-  const port = Number.parseInt(portRaw ?? '', 10);
-  const listenPort = Number.isFinite(port) && port > 0 ? port : 3000;
+export async function startServer() {
+  const app = await createApp();
+  const PORT = Number(process.env.PORT || 8000);
 
-  const startServer = async () => {
-    const app = await createApp();
-    app.listen(listenPort, () => console.log(`[api] Listening on :${listenPort}`));
-  };
+  if (server?.listening) return server;
 
-  startServer().catch((error) => {
-    console.error('[api] Failed to start server', error);
-    process.exitCode = 1;
+  server = app.listen(PORT, () => {
+    console.log('[HTTP] listening on', PORT);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error('[HTTP] PORT in use:', PORT, '→ skip listen (another instance running?)');
+      return;
+    }
+    throw err;
+  });
+
+  return server;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startServer().catch((e) => {
+    console.error('[HTTP] start error:', e);
+    process.exit(1);
   });
 }
