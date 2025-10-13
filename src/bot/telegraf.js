@@ -22,6 +22,22 @@ export const bot = new Telegraf(token, {
   handlerTimeout: 10000,
 });
 
+bot.use(async (ctx, next) => {
+  const u = ctx.update;
+  const txt = u?.message?.text;
+  const ent = u?.message?.entities;
+  console.log('[TRACE] in → type=%s text=%s entities=%j',
+    ctx.updateType, txt || '', ent || null);
+  try {
+    const r = await next();
+    console.log('[TRACE] out  ok → type=%s text=%s', ctx.updateType, txt || '');
+    return r;
+  } catch (e) {
+    console.log('[TRACE] out ERR →', e?.message || e);
+    throw e;
+  }
+});
+
 export const webhookCallback = bot.webhookCallback(
   (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
   { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() },
