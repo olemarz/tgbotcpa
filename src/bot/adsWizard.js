@@ -147,11 +147,14 @@ function normalizeTelegramUrl(raw) {
 }
 
 function initializeWizardState(ctx) {
-  const scene = ctx.scene?.state ?? {};
-  const baseOffer = typeof scene.offer === 'object' && scene.offer ? scene.offer : {};
-  const next = { ...scene, offer: { ...baseOffer } };
-  ctx.wizard.state = next;
-  ctx.scene.state = next;
+  const sceneState = ctx.scene?.state;
+  const baseState = sceneState && typeof sceneState === 'object' ? { ...sceneState } : {};
+  const baseOffer = baseState.offer && typeof baseState.offer === 'object' ? baseState.offer : {};
+  const nextState = {
+    ...baseState,
+    offer: { ...baseOffer },
+  };
+  ctx.scene.state = nextState;
 }
 
 function markStepPrompted(ctx) {
@@ -321,8 +324,11 @@ async function finishAndSend(ctx, offerId) {
 }
 
 async function step1(ctx) {
-  ctx.wizard.state ||= {};
-  console.log('[WIZARD] step1 enter, stateKeys=', Object.keys(ctx.wizard.state || {}));
+  // безопасная синхронизация уже внутри wizard-контекста
+  const base = ctx.scene?.state && typeof ctx.scene.state === 'object' ? ctx.scene.state : {};
+  ctx.wizard.state = ctx.wizard.state && typeof ctx.wizard.state === 'object'
+    ? ctx.wizard.state
+    : { ...base };
   if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') {
     ctx.wizard.state.offer = {};
   }
