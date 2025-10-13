@@ -28,9 +28,9 @@ bot.use(session());
 bot.use(stage.middleware());
 
 bot.use((ctx, next) => {
-  const txt = ctx.update?.message?.text;
-  if (typeof txt === 'string' && /^\/ads(\b|$)/.test(txt)) {
-    console.log('[GUARD] forced NEW wizard for /ads');
+  const t = ctx.update?.message?.text;
+  if (typeof t === 'string' && /^\/ads(\b|$)/.test(t)) {
+    console.log('[GUARD] force start adsWizard for /ads');
     return startAdsWizard(ctx);
   }
   return next();
