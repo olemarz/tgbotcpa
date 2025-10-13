@@ -471,7 +471,6 @@ export const adsWizardScene = new Scenes.WizardScene(
 );
 
 adsWizardScene.enter(initializeWizardState);
-adsWizardScene.enter(async (ctx) => goToStep(ctx, Step.TARGET_URL));
 
 export const startAdsWizard = (ctx, init = {}) =>
   ctx.scene.enter(ADS_WIZARD_ID, init && typeof init === 'object' ? init : {});
