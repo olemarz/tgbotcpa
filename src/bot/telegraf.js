@@ -9,6 +9,7 @@ import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
 import { Telegraf, Scenes, session } from 'telegraf';
+import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 
 const token = (process.env.BOT_TOKEN || '').trim();
@@ -16,7 +17,19 @@ export const bot = new Telegraf(token);
 
 const stage = new Scenes.Stage([adsWizardScene]);
 
-bot.use(session());
+bot.use(
+  session({
+    store: sessionStore,
+    getSessionKey(ctx) {
+      const fromId = ctx.from?.id;
+      if (!['string', 'number', 'bigint'].includes(typeof fromId)) {
+        return undefined;
+      }
+      const key = String(fromId);
+      return /^[0-9]+$/.test(key) ? key : undefined;
+    },
+  })
+);
 bot.use(stage.middleware()); // ← всегда до link-capture
 
 // guard для /ads: реагируем только на /ads (и его алиасы), без ложных срабатываний
