@@ -35,7 +35,8 @@ bot.use(async (ctx, next) => {
     console.log('[GUARD] /ads matched → start wizard | text=%j ents=%j', txt, ents);
     try {
       // передаём INIT-STATE корректно вторым аргументом
-      return await startAdsWizard(ctx, {});
+      const init = {};
+      return await startAdsWizard(ctx, init || {});
     } catch (e) {
       console.error('[GUARD] startAdsWizard error:', e?.message || e);
       // не блокируем цепочку даже при ошибке
@@ -57,7 +58,8 @@ console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
 bot.command(['ads','add','ads2','ads3'], async (ctx) => {
   try {
     console.log('[ADS] startAdsWizard invoked, hasScene=', !!ctx.scene);
-    await startAdsWizard(ctx, {});
+    const init = {};
+    await startAdsWizard(ctx, init || {});
     console.log('[ADS] ctx.scene.enter resolved');
   } catch (e) {
     console.error('[ADS] start error:', e?.message || e);
