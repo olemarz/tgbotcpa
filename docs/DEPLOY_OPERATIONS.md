@@ -4,6 +4,7 @@
 - Сервер: Linux (VPS), Node.js 20, PM2.
 - Корневая директория приложения: `/opt/tgbotcpa`.
 - PM2-процесс: `tg-api` (см. `ecosystem.config.cjs`).
+- API слушает Unix-сокет `/tmp/tg-api.sock`; проксируйте в nginx через `upstream tg_api { server unix:/tmp/tg-api.sock; }`.
 
 ## Ручной деплой (SSH)
 ```bash

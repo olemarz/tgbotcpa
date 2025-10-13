@@ -7,9 +7,12 @@ module.exports = {
     exec_mode: 'fork',
     watch: false,
     env: {
-      NODE_ENV: 'production',
-      PORT: 8000,
-      APP_VERSION: String(Date.now())
-    }
+      APP_VERSION: String(Date.now()),
+      NODE_ENV: process.env.NODE_ENV || "production",
+      SOCK_PATH: process.env.SOCK_PATH || "/tmp/tg-api.sock"
+    },
+    autorestart: true,
+    time: true,
+    max_memory_restart: "300M"
   }]
 };

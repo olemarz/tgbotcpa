@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
+import { unlinkSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
 import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
 import { createApp as createCoreApp } from './app.js';
