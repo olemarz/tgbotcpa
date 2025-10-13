@@ -322,6 +322,7 @@ async function finishAndSend(ctx, offerId) {
 
 async function step1(ctx) {
   ctx.wizard.state ||= {};
+  console.log('[WIZARD] step1 enter, stateKeys=', Object.keys(ctx.wizard.state || {}));
   if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') {
     ctx.wizard.state.offer = {};
   }
