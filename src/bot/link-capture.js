@@ -79,47 +79,47 @@ export function normalizeTelegramLink(rawUrl) {
 
 export default function linkCapture() {
   return async (ctx, next) => {
-    if (process.env.DISABLE_LINK_CAPTURE === 'true') {
-      return next();
-    }
+    const msg = ctx.update?.message;
+    const text = msg?.text || '';
 
-    const txt = ctx.update?.message?.text || '';
-    if (txt.startsWith('/')) return next();
+    // 1) если идёт любая команда — пропускаем
+    const ents = Array.isArray(msg?.entities) ? msg.entities : [];
+    const isCommand = ents.some((e) => e.type === 'bot_command' && e.offset === 0) || text.startsWith('/');
+    if (isCommand) return next();
 
-    const message = ctx.message || ctx.update?.message || null;
-    const textToInspect = getMessageText(message) || txt;
+    // 2) если сейчас активна любая сцена — пропускаем (пусть сценой управляет визард)
+    if (ctx.scene && ctx.scene.current) return next();
 
+    // 3) иначе — обычная логика захвата ссылок
+    const message = ctx.message || msg || null;
+    const textToInspect = getMessageText(message) || text;
     const m = textToInspect.match(/https?:\/\/t\.me\/\S+/i);
-    if (m) {
-      try {
-        const session = ctx.session || {};
-        if (session.awaiting !== 'target_link') {
-          return next();
-        }
+    if (!m) return next();
 
-        console.log('[link-capture] tg_id=%s text=%s', ctx.from?.id, textToInspect);
-        const rawUrl = extractUrlFromMessage(message) || textToInspect;
-        const normalized = normalizeTelegramLink(rawUrl);
-        if (!normalized) {
-          if (typeof ctx.reply === 'function') {
-            await ctx.reply('Нужна ссылка вида https://t.me/...');
-          }
-        } else {
-          if (!ctx.session) {
-            ctx.session = {};
-          }
-          ctx.session.raw_target_link = textToInspect;
-          ctx.session.target_link = normalized;
-          delete ctx.session.awaiting;
-        }
-      } catch (e) {
-        console.error('[link-capture]', e?.message || e);
+    try {
+      const session = ctx.session || {};
+      if (session.awaiting !== 'target_link') {
+        return next();
       }
-      // ВАЖНО: даже если обработали, ПРОПУСКАЕМ дальше
-      return next();
-    }
 
-    // 3) по умолчанию — всегда next()
+      console.log('[link-capture] tg_id=%s text=%s', ctx.from?.id, textToInspect);
+      const rawUrl = extractUrlFromMessage(message) || textToInspect;
+      const normalized = normalizeTelegramLink(rawUrl);
+      if (!normalized) {
+        if (typeof ctx.reply === 'function') {
+          await ctx.reply('Нужна ссылка вида https://t.me/...');
+        }
+      } else {
+        if (!ctx.session) {
+          ctx.session = {};
+        }
+        ctx.session.raw_target_link = textToInspect;
+        ctx.session.target_link = normalized;
+        delete ctx.session.awaiting;
+      }
+    } catch (e) {
+      console.error('[link-capture] error:', e?.message || e);
+    }
     return next();
   };
 }
