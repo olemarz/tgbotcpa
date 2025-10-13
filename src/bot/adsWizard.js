@@ -246,14 +246,14 @@ async function promptPremiumRate(ctx) {
 async function promptCapsTotal(ctx) {
   const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число, 0 — без ограничений).\n` +
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ 25).\n` +
     'Команды: [Назад], [Отмена].'
   );
 }
 async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите список стран/регионов через запятую (например: RU, UA; либо JSON).\n` +
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: RU,UA,KZ (ISO2-коды, через запятую/пробел).\n` +
     `Пусто или 0 — без гео-ограничений. Команды: [Назад], [Отмена].`
   );
 }
