@@ -48,52 +48,30 @@ export const webhookCallback = bot.webhookCallback(
 
 const stage = new Scenes.Stage([adsWizardScene]);
 
-// ДОЛЖНО стоять до любых команд:
+// 1) session
 bot.use(session());
+
+// 2) stage
 bot.use(stage.middleware());
 
-// sanity: есть ли ctx.scene?
-bot.use(async (ctx, next) => {
-  if (!ctx.scene) console.warn('[WARN] ctx.scene is undefined (stage.middleware not mounted?)');
-  return next();
-});
-
-// глобальный catcher
-bot.catch((err, ctx) => {
-  console.error('[TELEGRAF] error in update', ctx.update?.update_id, err);
-});
-
-// --- GUARD: поймать /ads в любом виде ещё до чужих миддлварей
-bot.use(async (ctx, next) => {
-  const msg = ctx.update?.message;
-  const txt = msg?.text ?? '';
-
-  // a) если Telegram пометил как команду (entities)
-  const ents = Array.isArray(msg?.entities) ? msg.entities : [];
-  const cmdEnt = ents.find((e) => e.type === 'bot_command' && e.offset === 0);
-  const hasCmdEntity = !!cmdEnt && txt.slice(0, cmdEnt.length || 0).startsWith('/');
-
-  // b) fallback: текст начинается с /ads (без entities, с @username или параметрами)
-  const re = /^\/ads(?:@[\w_]+)?(?:\s|$)/i;
-  const looksLikeAds = re.test(txt);
-
-  if ((hasCmdEntity && /^\/ads/i.test(txt)) || looksLikeAds) {
-    console.log('[GUARD] /ads matched → start wizard | text=%j ents=%j', txt, ents);
-    try {
-      return await startAdsWizard(ctx);
-    } catch (e) {
-      console.error('[GUARD] startAdsWizard error:', e?.message || e);
-    }
-    // даже при ошибке не блокируем цепочку
+// 3) guard для /ads
+bot.use((ctx, next) => {
+  const t = ctx.update?.message?.text || '';
+  if (/^\/ads(\b|@[\w_]+)?(\s|$)/i.test(t)) {
+    console.log('[GUARD] force adsWizard for /ads');
+    return startAdsWizard(ctx);
   }
   return next();
 });
 
-bot.use((ctx, next) => {
-  const t = ctx.update?.message?.text;
-  if (typeof t === 'string' && t.startsWith('/')) return next();
-  return next();
-});
+// 4) link-capture (если не отключён)
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  const linkCaptureModule = await import('./link-capture.js');
+  const linkCapture = linkCaptureModule.default || linkCaptureModule;
+  bot.use(linkCapture());
+} else {
+  console.log('[BOOT] link-capture DISABLED');
+}
 
 export function logUpdate(ctx, tag = 'update') {
   const u = ctx.update || {};
@@ -443,14 +421,6 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
     await ctx.reply('⚠️ Произошла ошибка. Попробуйте позже.');
   }
 });
-
-if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
-  const linkCaptureModule = require('./link-capture.js');
-  const linkCapture = linkCaptureModule.default || linkCaptureModule;
-  bot.use(linkCapture());
-} else {
-  console.log('[BOOT] link-capture DISABLED');
-}
 
 // Безопасная остановка в webhook-режиме
 function safeStop(reason) {
