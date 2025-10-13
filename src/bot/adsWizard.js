@@ -146,8 +146,16 @@ function normalizeTelegramUrl(raw) {
   } catch { return null; }
 }
 
-function resetWizardState(ctx) {
-  ctx.wizard.state = { offer: {} };
+function initializeWizardState(ctx) {
+  const sceneState = ctx.scene?.state;
+  const baseState = sceneState && typeof sceneState === 'object' ? { ...sceneState } : {};
+  const baseOffer = baseState.offer && typeof baseState.offer === 'object' ? baseState.offer : {};
+  const nextState = {
+    ...baseState,
+    offer: { ...baseOffer },
+  };
+  ctx.wizard.state = nextState;
+  ctx.scene.state = nextState;
 }
 
 function markStepPrompted(ctx) {
@@ -445,13 +453,16 @@ export const adsWizardScene = new Scenes.WizardScene(
 );
 
 export async function initializeAdsWizard(ctx) {
-  resetWizardState(ctx);
+  initializeWizardState(ctx);
   await goToStep(ctx, Step.TARGET_URL);
 }
 
 adsWizardScene.enter(initializeAdsWizard);
 
-export const startAdsWizard = (ctx) => ctx.scene.enter(ADS_WIZARD_ID);
+export const startAdsWizard = (ctx, init = {}) => {
+  const safeInit = init && typeof init === 'object' ? { ...init } : {};
+  return ctx.scene.enter(ADS_WIZARD_ID, safeInit);
+};
 
 export default adsWizardScene;
 

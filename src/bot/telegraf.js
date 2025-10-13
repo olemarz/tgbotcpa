@@ -2,27 +2,81 @@ console.log('[BOOT] telegraf START | APP_VERSION=', process.env.APP_VERSION || '
 
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session } from 'telegraf';
 import { createRequire } from 'node:module';
-import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
+import { Telegraf, Scenes, session } from 'telegraf';
+import { adsWizardScene, startAdsWizard } from './adsWizard.js';
+
+const token = (process.env.BOT_TOKEN || '').trim();
+export const bot = new Telegraf(token);
+
+const stage = new Scenes.Stage([adsWizardScene]);
+
+// 1) session -> stage
+bot.use(session());
+bot.use(stage.middleware());
+
+// 2) GUARD: ловим /ads в любом виде ещё до других миддлварей
+bot.use(async (ctx, next) => {
+  const msg = ctx.update?.message;
+  const txt = msg?.text || '';
+
+  const ents = Array.isArray(msg?.entities) ? msg.entities : [];
+  const cmdEnt = ents.find(e => e.type === 'bot_command' && e.offset === 0);
+  const hasCmdEntity = !!cmdEnt && txt.startsWith('/');
+
+  const looksLikeAds = /^\/ads(?:@[\w_]+)?(?:\s|$)/i.test(txt);
+
+  if ((hasCmdEntity && /^\/ads/i.test(txt)) || looksLikeAds) {
+    console.log('[GUARD] /ads matched → start wizard | text=%j ents=%j', txt, ents);
+    try {
+      // передаём INIT-STATE корректно вторым аргументом
+      return await startAdsWizard(ctx, {});
+    } catch (e) {
+      console.error('[GUARD] startAdsWizard error:', e?.message || e);
+      // не блокируем цепочку даже при ошибке
+    }
+  }
+  return next();
+});
+
+// 3) link-capture подключаем ПОСЛЕ гарда и не глотаем команды
+if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
+  const { default: linkCapture } = await import('./link-capture.js');
+  bot.use(linkCapture());
+} else {
+  console.log('[BOOT] link-capture DISABLED');
+}
+
+// 4) Командный алиас на мастер
+console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
+bot.command(['ads','add','ads2','ads3'], async (ctx) => {
+  try {
+    console.log('[ADS] startAdsWizard invoked, hasScene=', !!ctx.scene);
+    await startAdsWizard(ctx, {});
+    console.log('[ADS] ctx.scene.enter resolved');
+  } catch (e) {
+    console.error('[ADS] start error:', e?.message || e);
+    await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
+  }
+});
+
+export const webhookCallback = bot.webhookCallback(
+  (process.env.WEBHOOK_PATH || '/bot/webhook').trim(),
+  { secretToken: (process.env.WEBHOOK_SECRET || 'prod-secret').trim() }
+);
 
 const require = createRequire(import.meta.url);
 
 // ---- Инициализация бота ----
-const token = (process.env.BOT_TOKEN || '').trim();
 if (!token) {
   throw new Error('BOT_TOKEN is required');
 }
-
-export const bot = new Telegraf(token, {
-  handlerTimeout: 10000,
-});
 
 // ===== TRACE middleware (diag) =====
 bot.use(async (ctx, next) => {
@@ -436,25 +490,4 @@ function safeStop(reason) {
 process.once('SIGINT', () => safeStop('SIGINT'));
 process.once('SIGTERM', () => safeStop('SIGTERM'));
 
-if (String(startAdsWizard) === 'undefined' || typeof startAdsWizard !== 'function') {
-  throw new Error('adsWizard not exported correctly');
-}
-
-console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
-bot.command('ads', async (ctx, next) => {
-  console.log('[PING] /ads handler reached');
-  await ctx.reply('ads: pong');
-  return next();
-});
-
-console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
-bot.command(['ads', 'add', 'ads2', 'ads3'], async (ctx) => {
-  try {
-    console.log('[ADS] startAdsWizard invoked, hasScene=', !!ctx.scene);
-    await startAdsWizard(ctx);
-    console.log('[ADS] ctx.scene.enter resolved');
-  } catch (e) {
-    console.error('[ADS] start error:', e?.message || e, e?.stack || '');
-    await ctx.reply('❌ Не смог запустить мастер: ' + (e?.message || e));
-  }
-});
+export default bot;
