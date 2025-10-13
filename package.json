@@ -12,7 +12,7 @@
     "migrate": "node src/db/migrate.js",
     "test": "node --test \"tests/**/*.test.js\"",
     "test:ci": "node --test \"tests/**/*.test.js\"",
-    "register:webhook": "node -e \"require('dotenv').config(); const t=(process.env.BOT_TOKEN||'').trim(); if(!t) throw new Error('BOT_TOKEN empty'); const base=(process.env.BASE_URL||'').trim().replace(/\\/$/,''); const path=(process.env.WEBHOOK_PATH||'/bot/webhook').trim(); const u=base+path; const a=['message','callback_query','chat_member','my_chat_member']; const s=(process.env.WEBHOOK_SECRET||'prod-secret').trim(); const body=new URLSearchParams({url=u,secret_token:s,allowed_updates:JSON.stringify(a)}); fetch('https://api.telegram.org/bot'+t+'/setWebhook',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.text()).then(console.log).catch(console.error);\"",
+    "register:webhook": "node scripts/register-webhook.js",
     "doctor": "node scripts/doctor.js",
     "audit:ads": "node scripts/audit-ads.js",
     "env:print": "node scripts/print-env.cjs"
