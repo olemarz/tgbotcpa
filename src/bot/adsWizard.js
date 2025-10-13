@@ -317,17 +317,27 @@ async function finishAndSend(ctx, offerId) {
 export const adsWizardScene = new Scenes.WizardScene(
   'ads-wizard',
   async (ctx) => {
-    if (shouldSkipCurrentUpdate(ctx)) return;
-    if (isCancel(ctx)) return cancelWizard(ctx);
-    if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
-    const text = getMessageText(ctx);
-    const normalized = normalizeTelegramUrl(text || '');
-    if (!normalized) {
-      await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.');
-      return;
+    try {
+      console.log('[WIZARD] enter step1, from=', ctx.from?.id);
+      if (shouldSkipCurrentUpdate(ctx)) return;
+      if (isCancel(ctx)) return cancelWizard(ctx);
+      if (isBack(ctx)) {
+        await goToStep(ctx, Step.TARGET_URL);
+        return;
+      }
+      const text = getMessageText(ctx);
+      const normalized = normalizeTelegramUrl(text || '');
+      if (!normalized) {
+        await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.');
+        return;
+      }
+      ctx.wizard.state.offer.target_url = normalized;
+      return goToStep(ctx, Step.EVENT_TYPE);
+    } catch (e) {
+      console.error('[WIZARD] step1 error:', e?.message || e, e?.stack || '');
+      await ctx.reply('❌ Ошибка старта мастера: ' + (e?.message || e));
+      return ctx.scene.leave();
     }
-    ctx.wizard.state.offer.target_url = normalized;
-    return goToStep(ctx, Step.EVENT_TYPE);
   },
   async (ctx) => {
     if (shouldSkipCurrentUpdate(ctx)) return;
