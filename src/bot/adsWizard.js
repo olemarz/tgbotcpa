@@ -154,7 +154,6 @@ function initializeWizardState(ctx) {
     ...baseState,
     offer: { ...baseOffer },
   };
-  ctx.wizard.state = nextState;
   ctx.scene.state = nextState;
 }
 
@@ -325,7 +324,11 @@ async function finishAndSend(ctx, offerId) {
 }
 
 async function step1(ctx) {
-  ctx.wizard.state ||= {};
+  // безопасная синхронизация уже внутри wizard-контекста
+  const base = ctx.scene?.state && typeof ctx.scene.state === 'object' ? ctx.scene.state : {};
+  ctx.wizard.state = ctx.wizard.state && typeof ctx.wizard.state === 'object'
+    ? ctx.wizard.state
+    : { ...base };
   if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') {
     ctx.wizard.state.offer = {};
   }
