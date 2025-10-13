@@ -104,8 +104,14 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       return res.status(404).json({ ok: false, error: 'TOKEN_NOT_FOUND' });
     }
 
-    const { click_uuid: clickId, offer_id: offerId, tg_id: tgId, uid, event_type: offerEvent, external_click_id: externalClickId } =
-      clickResult.rows[0];
+    const {
+      click_uuid: clickUuid,
+      offer_id: offerId,
+      tg_id: tgId,
+      uid,
+      event_type: offerEvent,
+      external_click_id: externalClickId,
+    } = clickResult.rows[0];
 
     if (!tgId) {
       return res.status(409).json({ ok: false, error: 'TG_ID_MISSING' });
@@ -129,14 +135,14 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       await query(`INSERT INTO events (offer_id, tg_id, type) VALUES ($1, $2, $3)`, [offerId, numericTgId, event]);
     }
 
-    const attribution = await query(`SELECT 1 FROM attribution WHERE click_id = $1 LIMIT 1`, [clickId]);
+    const attribution = await query(`SELECT click_id FROM attribution WHERE click_id = $1 LIMIT 1`, [clickUuid]);
 
     if (attribution.rowCount) {
-      await query(`UPDATE attribution SET state = 'converted' WHERE click_id = $1`, [clickId]);
+      await query(`UPDATE attribution SET state = 'converted' WHERE click_id = $1`, [attribution.rows[0].click_id]);
     } else {
       await query(
         `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1, $2, $3, $4, 'converted')`,
-        [clickId, offerId, uid ?? null, numericTgId],
+        [clickUuid, offerId, uid ?? null, numericTgId],
       );
     }
 
