@@ -1,8 +1,3 @@
-console.log(
-  '[BOOT] adsWizard LOADED, TOTAL_INPUT_STEPS=',
-  typeof TOTAL_INPUT_STEPS !== 'undefined' ? TOTAL_INPUT_STEPS : 'n/a',
-);
-
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -457,3 +452,12 @@ export const startAdsWizard = async (ctx) => {
 };
 
 export default adsWizardScene;
+
+queueMicrotask(() => {
+  try {
+    // к этому моменту константы уже инициализированы
+    console.log('[BOOT] adsWizard LOADED, TOTAL_INPUT_STEPS=', TOTAL_INPUT_STEPS);
+  } catch (e) {
+    console.log('[BOOT] adsWizard LOADED (no steps yet)');
+  }
+});
