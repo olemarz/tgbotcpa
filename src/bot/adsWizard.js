@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Scenes, Markup } from 'telegraf';
 import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
-import { config } from '../config.js';
+import { config, MIN_CAP as DEFAULT_MIN_CAP } from '../config.js';
 import { query, insertOfferAuditLog } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { parseGeoInput } from '../utils/geo.js';
@@ -28,6 +28,7 @@ export const GEO = Object.freeze({
 });
 
 const minRates = config.MIN_RATES || {};
+const minCap = config.MIN_CAP ?? DEFAULT_MIN_CAP;
 const allowedTelegramHosts = new Set(['t.me', 'telegram.me', 'telegram.dog']);
 
 const __filename = fileURLToPath(import.meta.url);
@@ -125,12 +126,6 @@ function parseNumber(text) {
   const n = Number(normalized);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100) / 100;
-}
-function parseIntNonNegative(text) {
-  if (!text) return null;
-  const v = Number(String(text).trim());
-  if (!Number.isInteger(v) || v < 0) return null;
-  return v;
 }
 function formatRate(v) { return `${v} ₽`; }
 function getMessageText(ctx) { return ctx.message?.text?.trim(); }
@@ -414,9 +409,21 @@ async function step5(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.PREMIUM_RATE); return; }
-  const n = parseIntNonNegative(getMessageText(ctx));
-  if (n == null) { await ctx.reply('Введите целое число (0 — без ограничений).'); return; }
-  ctx.wizard.state.offer.caps_total = n === 0 ? null : n;
+  const raw = String(getMessageText(ctx) ?? '').trim();
+  const value = Number(raw.replace(',', '.'));
+  if (!Number.isFinite(value)) {
+    await ctx.reply(`Введите целое число, не меньше ${minCap}.`);
+    return;
+  }
+  if (value < minCap) {
+    await ctx.reply(`Минимальный лимит конверсий — ${minCap}. 0 (без ограничений) не допускается.`);
+    return;
+  }
+  if (!Number.isInteger(value)) {
+    await ctx.reply('Лимит должен быть целым числом.');
+    return;
+  }
+  ctx.wizard.state.offer.caps_total = value;
   return goToStep(ctx, Step.GEO_TARGETING);
 }
 
