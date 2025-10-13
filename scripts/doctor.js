@@ -1,9 +1,26 @@
 /* eslint-disable no-console */
 import 'dotenv/config';
 import assert from 'node:assert';
+import net from 'node:net';
 import pkg from 'pg';
 const { Client } = pkg;
 import fetch from 'node-fetch';
+
+async function checkPort(p = process.env.PORT || 8000) {
+  return new Promise((resolve) => {
+    const srv = net
+      .createServer()
+      .once('error', () => resolve(false))
+      .once('listening', () => {
+        srv.close(() => resolve(true));
+      })
+      .listen(p);
+  });
+}
+
+const free = await checkPort();
+console.log('Port', process.env.PORT || 8000, free ? 'FREE' : 'BUSY');
+if (!free) console.warn('Warning: port is busy, app will skip listen()');
 
 (async () => {
   try {
