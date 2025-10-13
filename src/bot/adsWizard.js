@@ -143,39 +143,27 @@ function normalizeTelegramUrl(raw) {
 
 function initializeWizardState(ctx) {
   const sceneState = ctx.scene?.state;
-  const baseState = sceneState && typeof sceneState === 'object' ? { ...sceneState } : {};
-  const baseOffer = baseState.offer && typeof baseState.offer === 'object' ? baseState.offer : {};
-  const nextState = {
-    ...baseState,
-    offer: { ...baseOffer },
-  };
-  ctx.scene.state = nextState;
+  const base = sceneState && typeof sceneState === 'object' ? sceneState : {};
+  const offer = base.offer && typeof base.offer === 'object' ? base.offer : {};
+  ctx.scene.state = { ...base, offer: { ...offer } };
 }
 
 function markStepPrompted(ctx) {
   const updateId = ctx.update?.update_id;
-  const scene = ctx.scene;
-  if (!scene) return;
-  const baseState = scene.state;
-  const state = baseState && typeof baseState === 'object' ? baseState : (scene.state = {});
-  state.skipUpdate = updateId ?? true;
+  const s = ctx.scene?.state || {};
+  s.skipUpdate = updateId ?? true;
+  ctx.scene.state = s;
 }
 
 function shouldSkipCurrentUpdate(ctx) {
-  const skipMark = ctx.scene?.state?.skipUpdate;
-  if (skipMark === undefined) {
-    return false;
-  }
-  const currentId = ctx.update?.update_id;
-  const state = ctx.scene?.state;
-  if (skipMark === true || (typeof skipMark === 'number' && skipMark === currentId)) {
-    if (state && typeof state === 'object') delete state.skipUpdate;
-    return true;
-  }
-  if (typeof skipMark === 'number' && currentId !== undefined) {
-    if (state && typeof state === 'object') delete state.skipUpdate;
-  }
-  return false;
+  const s = ctx.scene?.state;
+  const mark = s && typeof s === 'object' ? s.skipUpdate : undefined;
+  if (mark === undefined) return false;
+  const cur = ctx.update?.update_id;
+
+  const matched = mark === true || (typeof mark === 'number' && mark === cur);
+  if (s && typeof s === 'object') delete s.skipUpdate;
+  return matched;
 }
 
 async function goToStep(ctx, step) {
@@ -324,9 +312,6 @@ async function finishAndSend(ctx, offerId) {
 }
 
 async function step1(ctx) {
-  // синхронизация state как у тебя
-  ctx.wizard.state ||= {};
-
   const msg = ctx.update?.message;
   const text = msg?.text || '';
   const ents = Array.isArray(msg?.entities) ? msg.entities : [];
@@ -338,11 +323,8 @@ async function step1(ctx) {
     return; // не меняем состояние и не валидируем
   }
 
-  // безопасная синхронизация уже внутри wizard-контекста
-  const base = ctx.scene?.state && typeof ctx.scene.state === 'object' ? ctx.scene.state : {};
-  ctx.wizard.state = ctx.wizard.state && typeof ctx.wizard.state === 'object'
-    ? ctx.wizard.state
-    : { ...base };
+  const base = (ctx.scene?.state && typeof ctx.scene.state === 'object') ? ctx.scene.state : {};
+  ctx.wizard.state = (ctx.wizard.state && typeof ctx.wizard.state === 'object') ? ctx.wizard.state : { ...base };
   if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') {
     ctx.wizard.state.offer = {};
   }
