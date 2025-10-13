@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import express from 'express';
 import { fileURLToPath } from 'url';
 import { bot } from '../bot/telegraf.js';
 import { COMMIT, BRANCH, BUILT_AT } from '../version.js';
@@ -12,6 +13,11 @@ export async function createApp() {
 
   const webhookPath = (process.env.WEBHOOK_PATH || WEBHOOK_PATH_DEFAULT).trim() || WEBHOOK_PATH_DEFAULT;
   const webhookSecret = (process.env.WEBHOOK_SECRET || WEBHOOK_SECRET_DEFAULT).trim() || WEBHOOK_SECRET_DEFAULT;
+
+  app.post(webhookPath, express.json(), (req, _res, next) => {
+    console.log('[WEBHOOK] update_id=', req.body?.update_id, 'appVer=', process.env.APP_VERSION);
+    next();
+  });
 
   app.use(webhookPath, bot.webhookCallback(webhookPath, { secretToken: webhookSecret }));
 

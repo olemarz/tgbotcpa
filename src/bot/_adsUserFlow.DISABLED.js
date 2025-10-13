@@ -1,3 +1,5 @@
+throw new Error('FATAL: old adsUserFlow imported. Remove all imports.');
+
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { query } from '../db/index.js';

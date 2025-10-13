@@ -1,15 +1,25 @@
+console.log('[BOOT] telegraf START | APP_VERSION=', process.env.APP_VERSION || 'n/a');
+
 import 'dotenv/config';
 // src/bot/telegraf.js
-import { Telegraf, Scenes, session } from 'telegraf';
+import fs from 'node:fs';
+import { Telegraf } from 'telegraf';
+import { Scenes, session } from 'telegraf';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
-// import { handleAdsSkip, handleAdsCheck } from './adsUserFlow.js';
+// import { handleAdsSkip, handleAdsCheck } from './_adsUserFlow.DISABLED.js';
 import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
+
+const srcText = fs.readFileSync(new URL(import.meta.url).pathname, 'utf8');
+const legacyMarkers = ['adsUserFlow' + '.js', 'handleAdsUserCom' + 'mand'];
+legacyMarkers.forEach((s) => {
+  if (srcText.includes(s)) throw new Error('FATAL: old ads flow reference in telegraf.js: ' + s);
+});
 
 // ---- Инициализация бота ----
 const token = process.env.BOT_TOKEN;
@@ -401,8 +411,16 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
 });
 
 // Ловец ссылок должен идти после командных обработчиков
-if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
-  bot.use(createLinkCaptureMiddleware());
+if (process.env.DISABLE_LINK_CAPTURE === 'true') {
+  console.log('[BOOT] link-capture DISABLED');
+} else {
+  const linkCapture = createLinkCaptureMiddleware();
+  bot.use((ctx, next) => {
+    const txt = ctx.update?.message?.text;
+    if (typeof txt === 'string' && txt.startsWith('/')) return next();
+    return linkCapture(ctx, next);
+  });
+  // bot.use(linkCapture());  // ← оставь как было, но после защитной прослойки
 }
 
 // Безопасная остановка в webhook-режиме
@@ -419,10 +437,12 @@ function safeStop(reason) {
 process.once('SIGINT', () => safeStop('SIGINT'));
 process.once('SIGTERM', () => safeStop('SIGTERM'));
 
-console.log('[BOOT] adsWizard wired as /ads at', new Date().toISOString());
-
 if (String(startAdsWizard) === 'undefined' || typeof startAdsWizard !== 'function') {
   throw new Error('adsWizard not exported correctly');
 }
 
-bot.command(['ads', 'add'], startAdsWizard);
+console.log('[BOOT] adsWizard wired for commands: /ads, /add, /ads2, /ads3');
+bot.command(['ads', 'add', 'ads2', 'ads3'], (ctx) => {
+  console.log('[HOOK] /ads* → NEW adsWizard');
+  return startAdsWizard(ctx);
+});
