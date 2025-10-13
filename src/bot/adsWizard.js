@@ -476,17 +476,10 @@ export const adsWizardScene = new Scenes.WizardScene(
   step8
 );
 
-export async function initializeAdsWizard(ctx) {
-  initializeWizardState(ctx);
-  await goToStep(ctx, Step.TARGET_URL);
-}
+adsWizardScene.enter(initializeWizardState);
 
-adsWizardScene.enter(initializeAdsWizard);
-
-export const startAdsWizard = (ctx, init = {}) => {
-  const safeInit = init && typeof init === 'object' ? { ...init } : {};
-  return ctx.scene.enter(ADS_WIZARD_ID, safeInit);
-};
+export const startAdsWizard = (ctx, init = {}) =>
+  ctx.scene.enter(ADS_WIZARD_ID, init && typeof init === 'object' ? init : {});
 
 export default adsWizardScene;
 
