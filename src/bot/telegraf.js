@@ -16,11 +16,10 @@ export const bot = new Telegraf(token);
 
 const stage = new Scenes.Stage([adsWizardScene]);
 
-// 1) session -> stage
 bot.use(session());
-bot.use(stage.middleware());
+bot.use(stage.middleware()); // ← всегда до link-capture
 
-// 2) GUARD: ловим /ads в любом виде ещё до других миддлварей
+// guard для /ads (если оставляешь) тут
 bot.use(async (ctx, next) => {
   const msg = ctx.update?.message;
   const txt = msg?.text || '';
@@ -45,10 +44,9 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-// 3) link-capture подключаем ПОСЛЕ гарда и не глотаем команды
 if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   const { default: linkCapture } = await import('./link-capture.js');
-  bot.use(linkCapture());
+  bot.use(linkCapture()); // ← после stage
 } else {
   console.log('[BOOT] link-capture DISABLED');
 }

@@ -324,6 +324,20 @@ async function finishAndSend(ctx, offerId) {
 }
 
 async function step1(ctx) {
+  // синхронизация state как у тебя
+  ctx.wizard.state ||= {};
+
+  const msg = ctx.update?.message;
+  const text = msg?.text || '';
+  const ents = Array.isArray(msg?.entities) ? msg.entities : [];
+  const isCommand = ents.some((e) => e.type === 'bot_command' && e.offset === 0) || text.startsWith('/');
+
+  if (isCommand) {
+    // просто повторяем подсказку шага и выходим без ошибок
+    await promptTargetUrl(ctx);
+    return; // не меняем состояние и не валидируем
+  }
+
   // безопасная синхронизация уже внутри wizard-контекста
   const base = ctx.scene?.state && typeof ctx.scene.state === 'object' ? ctx.scene.state : {};
   ctx.wizard.state = ctx.wizard.state && typeof ctx.wizard.state === 'object'
@@ -477,6 +491,8 @@ export const adsWizardScene = new Scenes.WizardScene(
 );
 
 adsWizardScene.enter(initializeWizardState);
+
+export const initializeAdsWizard = initializeWizardState;
 
 export const startAdsWizard = (ctx, init = {}) =>
   ctx.scene.enter(ADS_WIZARD_ID, init && typeof init === 'object' ? init : {});
