@@ -79,15 +79,17 @@ export function normalizeTelegramLink(rawUrl) {
 
 export default function linkCapture() {
   return async (ctx, next) => {
-    const txt = getMessageText(ctx.message || ctx.update?.message) || '';
     if (process.env.DISABLE_LINK_CAPTURE === 'true') {
       return next();
     }
-    // 1) Команды не обрабатываем
+
+    const txt = ctx.update?.message?.text || '';
     if (txt.startsWith('/')) return next();
 
-    // 2) если нашли t.me/..., делаем свои действия
-    const m = txt.match(/https?:\/\/t\.me\/\S+/i);
+    const message = ctx.message || ctx.update?.message || null;
+    const textToInspect = getMessageText(message) || txt;
+
+    const m = textToInspect.match(/https?:\/\/t\.me\/\S+/i);
     if (m) {
       try {
         const session = ctx.session || {};
@@ -95,8 +97,8 @@ export default function linkCapture() {
           return next();
         }
 
-        console.log('[link-capture] tg_id=%s text=%s', ctx.from?.id, txt);
-        const rawUrl = extractUrlFromMessage(ctx.message) || txt;
+        console.log('[link-capture] tg_id=%s text=%s', ctx.from?.id, textToInspect);
+        const rawUrl = extractUrlFromMessage(message) || textToInspect;
         const normalized = normalizeTelegramLink(rawUrl);
         if (!normalized) {
           if (typeof ctx.reply === 'function') {
@@ -106,12 +108,12 @@ export default function linkCapture() {
           if (!ctx.session) {
             ctx.session = {};
           }
-          ctx.session.raw_target_link = txt;
+          ctx.session.raw_target_link = textToInspect;
           ctx.session.target_link = normalized;
           delete ctx.session.awaiting;
         }
       } catch (e) {
-        console.error('[link-capture] error', e?.message || e);
+        console.error('[link-capture]', e?.message || e);
       }
       // ВАЖНО: даже если обработали, ПРОПУСКАЕМ дальше
       return next();
