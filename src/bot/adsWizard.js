@@ -1,4 +1,7 @@
-console.log('[BOOT] adsWizard LOADED, TOTAL_INPUT_STEPS=', typeof TOTAL_INPUT_STEPS !== 'undefined' ? TOTAL_INPUT_STEPS : 'n/a');
+console.log(
+  '[BOOT] adsWizard LOADED, TOTAL_INPUT_STEPS=',
+  typeof TOTAL_INPUT_STEPS !== 'undefined' ? TOTAL_INPUT_STEPS : 'n/a',
+);
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

@@ -2,7 +2,6 @@ console.log('[BOOT] telegraf START | APP_VERSION=', process.env.APP_VERSION || '
 
 import 'dotenv/config';
 // src/bot/telegraf.js
-import fs from 'node:fs';
 import { Telegraf } from 'telegraf';
 import { Scenes, session } from 'telegraf';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
@@ -11,15 +10,8 @@ import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
-// import { handleAdsSkip, handleAdsCheck } from './_adsUserFlow.DISABLED.js';
 import { createLinkCaptureMiddleware } from './link-capture.js';
 import { registerStatHandlers } from './stat.js';
-
-const srcText = fs.readFileSync(new URL(import.meta.url).pathname, 'utf8');
-const legacyMarkers = ['adsUserFlow' + '.js', 'handleAdsUserCom' + 'mand'];
-legacyMarkers.forEach((s) => {
-  if (srcText.includes(s)) throw new Error('FATAL: old ads flow reference in telegraf.js: ' + s);
-});
 
 // ---- Инициализация бота ----
 const token = process.env.BOT_TOKEN;
@@ -31,6 +23,19 @@ export const bot = new Telegraf(token, {
   handlerTimeout: 10000,
 });
 
+const stage = new Scenes.Stage([adsWizardScene]);
+bot.use(session());
+bot.use(stage.middleware());
+
+bot.use((ctx, next) => {
+  const txt = ctx.update?.message?.text;
+  if (typeof txt === 'string' && /^\/ads(\b|$)/.test(txt)) {
+    console.log('[GUARD] forced NEW wizard for /ads');
+    return startAdsWizard(ctx);
+  }
+  return next();
+});
+
 export function logUpdate(ctx, tag = 'update') {
   const u = ctx.update || {};
   console.log('[tg]', tag, {
@@ -40,11 +45,6 @@ export function logUpdate(ctx, tag = 'update') {
     startPayload: ctx.startPayload,
   });
 }
-
-// сцены
-const stage = new Scenes.Stage([adsWizardScene]);
-bot.use(session());
-bot.use(stage.middleware());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 0) Любая команда — сперва очищаем "ожидание ссылки", чтобы визард не висел
@@ -239,32 +239,6 @@ bot.command('cancel', async (ctx) => {
   }
 });
 
-// bot.action(/^skip:([0-9a-f-]{36})$/i, async (ctx) => {
-//   if (ctx.scene?.current) {
-//     await ctx.answerCbQuery();
-//     return;
-//   }
-//   const offerId = ctx.match?.[1];
-//   if (!offerId) {
-//     await ctx.answerCbQuery();
-//     return;
-//   }
-//   await handleAdsSkip(ctx, offerId);
-// });
-
-// bot.action(/^check:([0-9a-f-]{36})$/i, async (ctx) => {
-//   if (ctx.scene?.current) {
-//     await ctx.answerCbQuery();
-//     return;
-//   }
-//   const offerId = ctx.match?.[1];
-//   if (!offerId) {
-//     await ctx.answerCbQuery();
-//     return;
-//   }
-//   await handleAdsCheck(ctx, offerId);
-// });
-
 bot.command('stat', async (ctx) => {
   logUpdate(ctx, 'stat');
   const todayKey = formatDateKey(new Date());
@@ -420,7 +394,7 @@ if (process.env.DISABLE_LINK_CAPTURE === 'true') {
     if (typeof txt === 'string' && txt.startsWith('/')) return next();
     return linkCapture(ctx, next);
   });
-  // bot.use(linkCapture());  // ← оставь как было, но после защитной прослойки
+  // bot.use(linkCapture()); // оставить как у тебя, но после прослойки
 }
 
 // Безопасная остановка в webhook-режиме
@@ -441,8 +415,5 @@ if (String(startAdsWizard) === 'undefined' || typeof startAdsWizard !== 'functio
   throw new Error('adsWizard not exported correctly');
 }
 
-console.log('[BOOT] adsWizard wired for commands: /ads, /add, /ads2, /ads3');
-bot.command(['ads', 'add', 'ads2', 'ads3'], (ctx) => {
-  console.log('[HOOK] /ads* → NEW adsWizard');
-  return startAdsWizard(ctx);
-});
+console.log('[BOOT] adsWizard wired: /ads, /add, /ads2, /ads3');
+bot.command(['ads', 'add', 'ads2', 'ads3'], (ctx) => startAdsWizard(ctx));
