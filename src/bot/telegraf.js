@@ -50,14 +50,28 @@ const stage = new Scenes.Stage([adsWizardScene]);
 bot.use(session());
 bot.use(stage.middleware());
 
-bot.use((ctx, next) => {
-  const t = ctx.update?.message?.text;
-  if (typeof t === 'string' && /^\/ads(\b|@[\w_]+)?(\s|$)/i.test(t)) {
-    console.log('[GUARD] force adsWizard for /ads', {
-      text: ctx.update?.message?.text,
-      entities: ctx.update?.message?.entities,
-    });
-    return startAdsWizard(ctx);
+// --- GUARD: поймать /ads в любом виде ещё до чужих миддлварей
+bot.use(async (ctx, next) => {
+  const msg = ctx.update?.message;
+  const txt = msg?.text ?? '';
+
+  // a) если Telegram пометил как команду (entities)
+  const ents = Array.isArray(msg?.entities) ? msg.entities : [];
+  const cmdEnt = ents.find((e) => e.type === 'bot_command' && e.offset === 0);
+  const hasCmdEntity = !!cmdEnt && txt.slice(0, cmdEnt.length || 0).startsWith('/');
+
+  // b) fallback: текст начинается с /ads (без entities, с @username или параметрами)
+  const re = /^\/ads(?:@[\w_]+)?(?:\s|$)/i;
+  const looksLikeAds = re.test(txt);
+
+  if ((hasCmdEntity && /^\/ads/i.test(txt)) || looksLikeAds) {
+    console.log('[GUARD] /ads matched → start wizard | text=%j ents=%j', txt, ents);
+    try {
+      return await startAdsWizard(ctx);
+    } catch (e) {
+      console.error('[GUARD] startAdsWizard error:', e?.message || e);
+    }
+    // даже при ошибке не блокируем цепочку
   }
   return next();
 });
