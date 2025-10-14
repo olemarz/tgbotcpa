@@ -1,139 +1,93 @@
-# Telegram Tracking MVP (Node.js + Telegraf)
+# Telegram CPA Bot
 
-Minimal MVP to track Telegram join/reaction/comment/poll/share events and send postbacks with `click_id` to a CPA network.
+Node.js 20 service that exposes an Express webhook for a Telegram bot built with Telegraf v4. The project runs under PM2 in production and relies on PostgreSQL for persistence.
 
-## Quick start (VPS + PM2)
+## Requirements
 
-1. Install Node 20, Git, PM2.
-2. Create Postgres DB (Neon/ElephantSQL or local).
-3. `cp .env.example .env` and fill values.
-4. `npm i`
-5. `npm run migrate`
-6. `pm2 start ecosystem.config.js && pm2 save`
-7. Expose `PORT` via Nginx or Cloudflare Tunnel and set Telegram webhook:
-   ```bash
-   curl -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
-     -d "url=$BASE_URL/bot/webhook" \
-     -d 'allowed_updates=["message","callback_query","chat_member","my_chat_member"]'
-   ```
+- Node.js 20+
+- PostgreSQL 13+
+- PM2 (for production process management)
+- Telegram Bot token
 
-## Deploy
+## Installation
 
 ```bash
-cd /opt/tgbotcpa
-bash scripts/deploy.sh
+npm install
+```
+
+Create an environment file based on production values:
+
+```bash
+cp ecosystem.env .env
+# edit .env and fill the required variables
+```
+
+## Local development
+
+Start the Express server with webhook handling:
+
+```bash
+node src/api/server.js
+```
+
+By default the service listens on `http://127.0.0.1:8000`. Health check is available at `GET /health`.
+
+Run syntax checks for all JavaScript files:
+
+```bash
+make check
+```
+
+Trigger manual webhook testing:
+
+```bash
+make webhook-test
+```
+
+## Running with PM2
+
+The repository ships with `ecosystem.config.cjs`. Deploy and launch on a server:
+
+```bash
+pm2 start ecosystem.config.cjs --only tg-api
+pm2 save
+pm2 status
 pm2 logs tg-api --lines 120
 ```
 
-## Deploy (GitHub Actions → SSH)
+Reload after deploying new code:
 
-1. Push/merge в `main` → запускается workflow `Deploy via SSH`.
-2. В GitHub Actions убедитесь, что ран зелёный и шаги дошли до SSH.
-3. Сверьте SHA коммита в логах деплоя с `git rev-parse HEAD` на сервере.
-4. На сервере проверьте `pm2 status` и `pm2 logs tg-api`.
+```bash
+pm2 restart tg-api
+```
 
-## Endpoints
-- `GET /click/:offerId` → creates token & redirects to `t.me/Bot?start=<token>`
-- `GET /s/:shareToken` → counts unique share click & redirects
-- `POST /postbacks/relay` → accept external postbacks (e.g., from advertiser's bot) and attribute by `user_id`
+## Webhook configuration
 
-## Notes
-- This is an MVP scaffold. Review and harden before production.
+Expose the Express server (`PORT`, `HOST`) via Nginx or another reverse proxy. Configure Telegram to send updates to the webhook:
 
-- # Telegram Gleam-like bot MVP
+```bash
+curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  -d "url=https://adspirin.ru${WEBHOOK_PATH:-/bot/webhook}" \
+  -d 'allowed_updates=["message","callback_query","chat_member","my_chat_member"]'
+```
 
-## Цель
-Система трекинга действий пользователей Telegram (аналог gleam.io)
-Рекламодатели создают задания: вступить в группу, подписаться на канал, нажать кнопку и т.д.
-Бот отслеживает выполнение и возвращает результат через постбеки / вебхуки.
+Verify webhook status:
 
-## Основные сущности
-- Администратор
-- Рекламодатель
-- Пользователь (участник кампаний)
+```bash
+curl "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+```
 
-## Основные функции
-1. Создание кампаний рекламодателями
-2. Генерация реферальных / трекинг-ссылок
-3. Проверка выполнения действий
-4. Постбеки в систему HeyPay / Adspirin
-5. Хранение статистики
-6. Отчёты по действиям
+## Useful scripts
 
-## Технологический стек
-Python + Aiogram + FastAPI + PostgreSQL
+- `scripts/health.sh` — call the local `/health` endpoint.
+- `scripts/test-webhook.sh` — send a synthetic `/start` update to the webhook.
+- `scripts/register-webhook.js` — helper for BotFather webhook registration.
 
+## Directory layout
 
-Бот в телеграм аналог gleam.io для владельцев телеграмм групп, ботов, миниаппов и каналов. Для отслеживания целевых действий и обратной связи в виде постбеков/вебхуков
-
-Система представляет из себя телеграм бота, в который рекламодатели скидывают URL своего канала, группы, бота, миниапп
-Выбирают целевое действие, количество целевых действий и производят оплату
-
-В системе три основные сущности
-Администратор бота
-Хранить статистику
-Выдавать ссылки
-Проверять премиальность пользователя
-
-Рекламодатель - размещает рекламные офферы в систему, оплачивает их и получает результат. Платит за Целевые Действия (ЦД): вступление в группу/канал; forward сообщений из группы/канала; реакция на сообщение; вступление/активация бота/миниапп; покупка звезд в ТГ; покупка/дарение ТГ премиум; иные действия в боте, по которым можно автоматизировать сбор постбеков.
-
-Ты как разработчик и архитектор должен составить подробный список с ограничениями!
-
-СРА сеть - сеть, где размещается ссылка данная ботом. В момент клика по ней, пользователем СРА сети, сеть присваивает uid кликайди, который в дальнейшем должен быть возвращен СРА сети в виде постбека. Бот фиксирует переход по ссылке (для статистики). Бот сохраняет связь user_id ↔ uid и выдаёт кнопку на Целевое Действие.
-
-
-Пользователь жмёт, попадает на целевую страницу/бота/приложение.
-
-
-Бот фиксирует событие Целевого действия и шлёт постбек в сеть о выполнении ЦД
-
-
-Рекламодатель
-
-/ads
-	URL (что продвигаем) - вбиваем ссылку на канал/группу/сообщение/бота/миниапп
-	Rate type(выбираем, за что хотим платить, за какие целевые действия ЦД)
-вступить в группу
-собрать лайки
-запустить бота
-Иные действия в боте
-купить звезды
-Указать стоимость ЦД (проверка на минимальное значение для того или иного типа ЦД). Каждый тип ЦД обладает минимальной стоимостью, ниже которой, запустить кампанию не получится. 
-вступление в группу/канал; от 5 звезд обычный пользователь, от 10 звезд VIP
-forward сообщений из группы/канала; от 2 звезды / 7 звезд
-реакция на сообщение; от 1 звезда / 5 звезд
-
-оставленный комментарий под записью; от 3 звезды / 10 звезд
-покупка платного контента; от 30 звезд
-вступление/активация бота/миниапп от 3 звезды / 10 звезд
-Параметры должны быть настраиваемы администратором бота
-Стоимость ЦД для премиум аккаунтов - поле для указания цены ЦД, которую рекламодатель готов заплатить, если ЦД выполняется премиальными аккаунтами ТГ
-Лимит по ЦД  всего. Набор полей с указанием, сколько ЦД будет доступно для выполнения в выбранный временной промежуток
-Временной таргетинг показа -  рекламодатель указывает в какие временные промежутки показывать оффер/рекламу (24/7, только будни, только будни рабочие дни, только выходные, ручной выбор часов и дней недели для показа)
-Указать url группы/бота, где надо отслеживать выполнение ЦД.
-Отдать ссылку, на которую надо наливать…
-Оплатить размещение - переход на страницу оплаты звездами
-
-После этого бот администратор получает подробную информацию о размещении. Ссылка и необходимые параметры настраиваются вручную менеджером СРА
-
-
-/stat
-Сводка по офферам рекламодателя: клики, конверсии, CR и spend за выбранный день и за всё время. Даты можно листать кнопками.
-
-
-
-## Как создать оффер через /ads
-1. В Telegram напишите боту команду `/ads`.
-2. Укажите целевой URL в формате `https://t.me/...`.
-3. Выберите тип целевого действия.
-4. Введите базовую ставку (не ниже минимальной) и ставку для премиум-пользователей.
-5. Укажите общий лимит конверсий — целое число от 10 и выше.
-6. Введите название оффера и при необходимости измените slug.
-7. Проверьте карточку и подтвердите создание — бот пришлёт кликабельную ссылку вида `https://<BASE_URL_HOST>/click/<OFFER_ID>?uid={your_uid}`. Перед раздачей замените плейсхолдер на реальный `uid`/`click_id` из CPA-сети.
-
-## CPA поток
-- **CPA-ссылка**. После создания оффера бот отправляет уведомление с кликабельной ссылкой. Этот же URL доступен в админке в поле `offers.tracking_url` — именно его раздают вебмастерам.
-- **Флаг `USE_STARTAPP`**. Указывает, требуется ли использовать промежуточную страницу StartApp. Установите `USE_STARTAPP=true`, чтобы редиректить клики через StartApp, или `USE_STARTAPP=false`, чтобы вести трафик напрямую в Telegram.
-- **`OPERATOR_TG_ID`**. Telegram ID оператора, который получает служебные уведомления (ошибки постбеков, лимиты и т.д.). Значение указывается в `.env`.
-- **JOIN-проверка**. Для проверки вступления (`getChatMember`) бот должен быть добавлен в отслеживаемый чат и иметь права на чтение списка участников. Без доступа метод вернёт ошибку, и конверсия не засчитается.
-
+- `src/api/server.js` — Express server with webhook endpoint.
+- `src/bot/telegraf.js` — Telegraf initialisation, stages and handlers.
+- `src/bot/adsWizard.js` — wizard scene for ad creation.
+- `src/services/` — postback, conversion and join verification logic.
+- `src/db/index.js` — PostgreSQL access helpers.
+- `DOCS/` — operational documentation.
