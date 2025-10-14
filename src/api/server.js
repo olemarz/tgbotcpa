@@ -1,55 +1,70 @@
 /* eslint-disable no-console */
 import 'dotenv/config';
 import express from 'express';
-import { webhookCallback, bot } from '../bot/telegraf.js';
-
-void bot; // ensure bot is initialized for webhook processing
+import { bot } from '../bot/telegraf.js';
 
 export async function createApp() {
   const app = express();
 
-  // 1) health
+  // Health-check
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
-  // 2) Точный маршрут вебхука (должен совпадать с WEBHOOK_PATH из .env)
+  // Путь вебхука
   const WEBHOOK_PATH = (process.env.WEBHOOK_PATH || '/bot/webhook').trim();
 
-  // 3) Логи входящих апдейтов (диагностика 404)
-  app.post(
-    WEBHOOK_PATH,
-    express.json(),
-    (req, res, next) => {
-      console.log('[WEBHOOK] hit', WEBHOOK_PATH, 'update_id=', req.body?.update_id);
-      next();
-    },
+  // JSON body parser
+  app.use(express.json());
 
-    // 4) Telegraf webhook с секретом (если задан)
-    webhookCallback, // уже создан в telegraf.js: bot.webhookCallback(WEBHOOK_PATH, { secretToken: ... })
-  );
+  // Вебхук: прокидываем апдейты в бот
+  app.post(WEBHOOK_PATH, async (req, res) => {
+    const updateId = req.body?.update_id;
+    console.log('[WEBHOOK] hit', WEBHOOK_PATH, 'update_id =', updateId);
 
-  // 5) 404
-  app.use((_req, res) => res.status(404).json({ ok: false, error: 'not found' }));
+    try {
+      await bot.handleUpdate(req.body);
+      res.status(200).end();
+    } catch (err) {
+      console.error('[WEBHOOK] handleUpdate error:', err);
+      res.status(500).end();
+    }
+  });
+
+  // 404 на прочие маршруты
+  app.use((_req, res) => res.status(404).json({ ok: false, error: 'Not found' }));
 
   return app;
 }
 
 let server;
+
 export async function startServer() {
-  const app = await createApp();
-  const PORT = Number(process.env.PORT || 8000);
   if (server?.listening) return server;
 
-  server = app.listen(PORT, () => console.log('[HTTP] listening on', PORT));
+  const app = await createApp();
+  const PORT = Number(process.env.PORT || 8000);
+  const HOST = process.env.HOST || '0.0.0.0';
+
+  console.log('[HTTP] start requested');
+
+  server = app.listen(PORT, HOST, () => {
+    console.log(`[HTTP] listening on ${HOST}:${PORT}`);
+  });
+
   server.on('error', (err) => {
     if (err?.code === 'EADDRINUSE') {
-      console.error('[HTTP] PORT in use:', PORT, '→ skip listen (Nginx proxy ok)');
+      console.error('[HTTP] PORT in use:', PORT, '→ skip listen (proxy ok)');
       return;
     }
-    throw err;
+    console.error('[HTTP] server error:', err);
+    process.exit(1);
   });
+
   return server;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  startServer().catch((e) => { console.error('[HTTP] start error:', e); process.exit(1); });
+  startServer().catch((e) => {
+    console.error('[HTTP] start error:', e);
+    process.exit(1);
+  });
 }
