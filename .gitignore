@@ -4,3 +4,6 @@ var/
 *.bak
 .DS_Store
 npm-debug.log*
+
+# local backups
+*.bak.*
