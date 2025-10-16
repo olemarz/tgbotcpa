@@ -40,7 +40,8 @@ app.post(WEBHOOK_PATH, async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] listening on 0.0.0.0:${PORT}`);
+const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
+app.listen(PORT, BIND_HOST, () => {
+  console.log(`[HTTP] listening on ${BIND_HOST}:${PORT}`);
   console.log(`[HTTP] webhook route => POST ${WEBHOOK_PATH}`);
 });
