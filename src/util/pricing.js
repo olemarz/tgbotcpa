@@ -1,15 +1,13 @@
-// src/util/pricing.js
+// +30% для выделенных GEO, округление всегда вверх
 const HIGH_GEO = (process.env.HIGH_GEO_LIST || '')
   .split(',')
   .map(s => s.trim().toUpperCase())
   .filter(Boolean);
 
 /**
- * Возвращает скорректированную цену в центах:
- * - если GEO входит в HIGH_GEO → +30%, округление вверх до целых центов
- * - иначе без изменений
- * @param {number} baseCents
- * @param {string|null} geo e.g. "US", "USA", "DE", "UA"
+ * Корректирует payout в центах:
+ * - если geo ∈ HIGH_GEO → *1.3 и Math.ceil
+ * - иначе — без изменений
  */
 export function adjustPayoutCents(baseCents, geo) {
   const n = Math.max(0, Number(baseCents || 0));
@@ -17,5 +15,5 @@ export function adjustPayoutCents(baseCents, geo) {
   if (!g || HIGH_GEO.length === 0) return n;
   if (!HIGH_GEO.includes(g)) return n;
   const bumped = n * 1.3;
-  return Math.ceil(bumped); // всегда вверх
+  return Math.ceil(bumped);
 }
