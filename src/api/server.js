@@ -1,6 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
 import { bot } from '../bot/telegraf.js';
+import { query } from '../db/index.js';
+import { adjustPayoutCents } from '../util/pricing.js';
+
+function isAdmin(req) {
+  const t = (req.query.admin_token || req.get('X-Admin-Token') || '').trim();
+  return t && t === (process.env.ADMIN_TOKEN || '').trim();
+}
 
 const app = express();
 const PORT = Number(process.env.PORT || 8000);
@@ -38,6 +45,48 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     console.error('[WEBHOOK] handleUpdate error:', e);
     res.status(500).end();
   }
+});
+
+// GET /api/offers (admin)
+app.get('/api/offers', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ ok: false });
+  const r = await query(`
+    SELECT id, title, status, budget_cents, paid_cents, payout_cents, created_by_tg_id, target_url, event_type, geo
+      FROM offers
+     ORDER BY created_at DESC
+     LIMIT 200
+  `);
+  res.json({ ok: true, items: r.rows });
+});
+
+// POST /api/offers — создание (используется мастером в боте)
+app.post('/api/offers', async (req, res) => {
+  const { title, target_url, event_type = 'join_group', payout_cents = 0, budget_cents = 0, geo = null, created_by_tg_id } = req.body || {};
+  if (!title || !target_url || !created_by_tg_id) return res.status(400).json({ ok: false, error: 'missing fields' });
+
+  const adjusted = adjustPayoutCents(payout_cents, geo);
+  const r = await query(
+    `INSERT INTO offers (id, title, target_url, event_type, payout_cents, budget_cents, geo, created_by_tg_id, status)
+     VALUES (gen_random_uuid(), $1,$2,$3,$4,$5,$6,$7,'draft')
+     RETURNING *`,
+    [title, target_url, event_type, adjusted, budget_cents, geo, created_by_tg_id],
+  );
+  res.json({ ok: true, offer: r.rows[0] });
+});
+
+// Fallback "fake pay" /api/pay/:id (оставляем на случай отладки)
+app.post('/api/pay/:id', express.urlencoded({extended:true}), async (req, res) => {
+  const { id } = req.params;
+  const amount_cents = Number(req.body?.amount_cents || 0);
+  if (!Number.isFinite(amount_cents) || amount_cents <= 0) return res.status(400).json({ ok: false, error: 'bad amount' });
+  const r = await query(
+    `UPDATE offers
+        SET paid_cents = COALESCE(paid_cents,0) + $2,
+            status = CASE WHEN COALESCE(paid_cents,0)+$2 >= budget_cents THEN 'active' ELSE status END
+      WHERE id=$1
+  RETURNING id,status,paid_cents,budget_cents`, [id, amount_cents]);
+  if (!r.rowCount) return res.status(404).json({ ok: false, error: 'offer not found' });
+  res.json({ ok: true, offer: r.rows[0] });
 });
 
 const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
