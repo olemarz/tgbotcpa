@@ -70,6 +70,45 @@ async function replyHtml(ctx, html, extra = {}) {
   return ctx.reply(html, { parse_mode: 'HTML', ...extra });
 }
 
+ return ctx.reply(html, { parse_mode: 'HTML', ...extra });
+}
+
+// --- helper: admin context
+function isAdminCtx(ctx) {
+  const adminId = Number(process.env.ADMIN_TG_ID || 0);
+  return adminId && ctx.from?.id && Number(ctx.from.id) === adminId;
+}
+
+// /admin_offers — последние 20 офферов
+bot.command('admin_offers', async (ctx) => {
+  if (!isAdminCtx(ctx)) return;
+  const r = await query(
+    `SELECT id, title, status, budget_cents, paid_cents, payout_cents, created_by_tg_id
+       FROM offers
+      ORDER BY created_at DESC
+      LIMIT 20`,
+  );
+  if (!r.rowCount) return ctx.reply('Пусто');
+  const lines = r.rows.map(
+    (o) =>
+      `• <code>${o.id}</code> — ${o.title || '(без названия)'} [${o.status}] ` +
+      `бюджет ${(o.budget_cents / 100).toFixed(2)} ₽, оплачено ${(o.paid_cents / 100).toFixed(2)} ₽, payout ${(o.payout_cents / 100).toFixed(2)} ₽`,
+  );
+  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+});
+
+// /offer_status <UUID> <active|paused|stopped|draft>
+bot.command('offer_status', async (ctx) => {
+  if (!isAdminCtx(ctx)) return;
+  const m = (ctx.message?.text || '').match(/^\/offer_status\s+([0-9a-f-]{36})\s+(active|paused|stopped|draft)$/i);
+  if (!m) return ctx.reply('Формат: /offer_status <UUID> <active|paused|stopped|draft>');
+  const [, id, st] = m;
+  const r = await query(`UPDATE offers SET status=$2 WHERE id=$1 RETURNING id,status`, [id, st.toLowerCase()]);
+  if (!r.rowCount) return ctx.reply('Не найдено');
+  await ctx.reply(`OK: ${r.rows[0].id} → ${r.rows[0].status}`);
+});
+
+// --- Stars billing helpers (динамика по схеме offers)
 let offersColumnsPromise;
 async function getOfferColumns() {
   if (!offersColumnsPromise) {
@@ -84,41 +123,33 @@ function normalizeGeoForInsert(geo) {
   const list = (() => {
     if (!geo) return [];
     if (Array.isArray(geo)) {
-      return geo
-        .map((value) => (typeof value === 'string' ? value.trim().toUpperCase() : ''))
-        .filter(Boolean);
+      return geo.map(v => (typeof v === 'string' ? v.trim().toUpperCase() : '')).filter(Boolean);
     }
     if (typeof geo === 'string') {
-      return geo
-        .split(/[,\s]+/)
-        .map((part) => part.trim().toUpperCase())
-        .filter(Boolean);
+      return geo.split(/[,\s]+/).map(p => p.trim().toUpperCase()).filter(Boolean);
     }
     return [];
   })();
-
   const geoInput = list.length ? list.join(',') : null;
   return { list: list.length ? list : null, input: geoInput };
 }
+
+// ВАЖНО: требуются импорты сверху файла:
+//   import { adjustPayoutCents } from '../util/pricing.js';
+//   import { centsToXtr } from '../util/xtr.js';
 
 export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const columns = await getOfferColumns();
   const tgId = ctx.from?.id ?? null;
 
-  const basePayoutCents = Number.isFinite(Number(form?.payout_cents))
-    ? Number(form.payout_cents)
-    : 0;
+  const basePayoutCents = Number.isFinite(Number(form?.payout_cents)) ? Number(form.payout_cents) : 0;
   const geo = form?.geo ?? null;
-  const payoutAdjusted = adjustPayoutCents(basePayoutCents, geo);
+  const payoutAdjusted = adjustPayoutCents(basePayoutCents, geo); // +30% на high GEO с ceil
 
-  const providedBudgetCents = Number.isFinite(Number(form?.budget_cents))
-    ? Number(form.budget_cents)
-    : 0;
+  const providedBudgetCents = Number.isFinite(Number(form?.budget_cents)) ? Number(form.budget_cents) : 0;
   const normalizedBudgetCents = providedBudgetCents > 0 ? providedBudgetCents : payoutAdjusted;
 
-  const providedBudgetXtr = Number.isFinite(Number(form?.budget_xtr))
-    ? Number(form.budget_xtr)
-    : null;
+  const providedBudgetXtr = Number.isFinite(Number(form?.budget_xtr)) ? Number(form.budget_xtr) : null;
   const normalizedBudgetXtr = providedBudgetXtr && providedBudgetXtr > 0
     ? Math.floor(providedBudgetXtr)
     : centsToXtr(normalizedBudgetCents);
@@ -126,121 +157,56 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const insertColumns = [];
   const values = [];
   const params = [];
-
-  const push = (column, value) => {
-    if (!columns.has(column)) return;
-    insertColumns.push(column);
-    values.push(value);
-    params.push(`$${values.length}`);
-  };
+  const push = (column, value) => { if (!columns.has(column)) return; insertColumns.push(column); values.push(value); params.push(`$${values.length}`); };
 
   const title = form?.title ?? form?.name ?? null;
-  if (columns.has('title')) {
-    push('title', title);
-  } else if (columns.has('name')) {
-    push('name', title);
-  }
+  if (columns.has('title')) push('title', title); else if (columns.has('name')) push('name', title);
 
-  if (form?.slug != null) {
-    push('slug', form.slug);
-  }
+  if (form?.slug != null) push('slug', form.slug);
+  if (columns.has('target_url')) push('target_url', form?.target_url ?? null);
+  if (columns.has('target_link') && form?.target_link != null) push('target_link', form.target_link);
+  if (columns.has('event_type')) push('event_type', form?.event_type ?? 'join_group');
 
-  if (columns.has('target_url')) {
-    push('target_url', form?.target_url ?? null);
-  }
-  if (columns.has('target_link') && form?.target_link != null) {
-    push('target_link', form.target_link);
-  }
-  if (columns.has('event_type')) {
-    push('event_type', form?.event_type ?? 'join_group');
-  }
+  if (columns.has('payout_cents')) push('payout_cents', payoutAdjusted);
 
-  if (columns.has('payout_cents')) {
-    push('payout_cents', payoutAdjusted);
-  }
-
-  const baseRateRub = Number.isFinite(Number(form?.base_rate_rub))
-    ? Number(form.base_rate_rub)
-    : Number.isFinite(Number(form?.base_rate))
-      ? Number(form.base_rate)
-      : null;
-  const baseRateCents = Number.isFinite(Number(form?.base_rate_cents))
-    ? Number(form.base_rate_cents)
-    : baseRateRub != null
-      ? Math.round(baseRateRub * 100)
-      : null;
-
+  const baseRateRub = Number.isFinite(Number(form?.base_rate_rub)) ? Number(form.base_rate_rub)
+    : Number.isFinite(Number(form?.base_rate)) ? Number(form.base_rate) : null;
+  const baseRateCents = Number.isFinite(Number(form?.base_rate_cents)) ? Number(form.base_rate_cents)
+    : baseRateRub != null ? Math.round(baseRateRub * 100) : null;
   if (columns.has('base_rate')) {
-    if (baseRateCents != null) {
-      push('base_rate', baseRateCents);
-    } else if (baseRateRub != null) {
-      push('base_rate', baseRateRub);
-    } else if (!columns.has('payout_cents')) {
-      push('base_rate', Math.round(payoutAdjusted / 100));
-    }
+    if (baseRateCents != null) push('base_rate', baseRateCents);
+    else if (baseRateRub != null) push('base_rate', baseRateRub);
+    else if (!columns.has('payout_cents')) push('base_rate', Math.round(payoutAdjusted / 100));
   }
 
-  const premiumRateRub = Number.isFinite(Number(form?.premium_rate_rub))
-    ? Number(form.premium_rate_rub)
-    : Number.isFinite(Number(form?.premium_rate))
-      ? Number(form.premium_rate)
-      : null;
-  const premiumRateCents = Number.isFinite(Number(form?.premium_rate_cents))
-    ? Number(form.premium_rate_cents)
-    : premiumRateRub != null
-      ? Math.round(premiumRateRub * 100)
-      : null;
-
+  const premiumRateRub = Number.isFinite(Number(form?.premium_rate_rub)) ? Number(form.premium_rate_rub)
+    : Number.isFinite(Number(form?.premium_rate)) ? Number(form.premium_rate) : null;
+  const premiumRateCents = Number.isFinite(Number(form?.premium_rate_cents)) ? Number(form.premium_rate_cents)
+    : premiumRateRub != null ? Math.round(premiumRateRub * 100) : null;
   if (columns.has('premium_rate')) {
-    if (premiumRateCents != null) {
-      push('premium_rate', premiumRateCents);
-    } else if (premiumRateRub != null) {
-      push('premium_rate', premiumRateRub);
-    }
+    if (premiumRateCents != null) push('premium_rate', premiumRateCents);
+    else if (premiumRateRub != null) push('premium_rate', premiumRateRub);
   }
 
-  if (columns.has('caps_total') && form?.caps_total != null) {
-    push('caps_total', form.caps_total);
-  }
-
-  if (columns.has('budget_cents')) {
-    push('budget_cents', normalizedBudgetCents);
-  }
-  if (columns.has('budget_xtr')) {
-    push('budget_xtr', normalizedBudgetXtr);
-  }
+  if (columns.has('caps_total') && form?.caps_total != null) push('caps_total', form.caps_total);
+  if (columns.has('budget_cents')) push('budget_cents', normalizedBudgetCents);
+  if (columns.has('budget_xtr')) push('budget_xtr', normalizedBudgetXtr);
 
   const geoNormalized = normalizeGeoForInsert(geo);
-  if (columns.has('geo')) {
-    push('geo', Array.isArray(geoNormalized.list) ? geoNormalized.list.join(',') : geoNormalized.input);
-  }
-  if (columns.has('geo_input') && geoNormalized.input !== null) {
-    push('geo_input', geoNormalized.input);
-  }
-  if (columns.has('geo_list') && geoNormalized.list) {
-    push('geo_list', geoNormalized.list);
-  }
-  if (columns.has('geo_whitelist') && geoNormalized.list) {
-    push('geo_whitelist', geoNormalized.list);
-  }
+  if (columns.has('geo')) push('geo', Array.isArray(geoNormalized.list) ? geoNormalized.list.join(',') : geoNormalized.input);
+  if (columns.has('geo_input') && geoNormalized.input !== null) push('geo_input', geoNormalized.input);
+  if (columns.has('geo_list') && geoNormalized.list) push('geo_list', geoNormalized.list);
+  if (columns.has('geo_whitelist') && geoNormalized.list) push('geo_whitelist', geoNormalized.list);
 
-  if (columns.has('created_by_tg')) {
-    push('created_by_tg', tgId);
-  }
-  if (columns.has('created_by_tg_id')) {
-    push('created_by_tg_id', tgId);
-  }
-
-  if (columns.has('status')) {
-    push('status', form?.status ?? 'draft');
-  }
+  if (columns.has('created_by_tg')) push('created_by_tg', tgId);
+  if (columns.has('created_by_tg_id')) push('created_by_tg_id', tgId);
+  if (columns.has('status')) push('status', form?.status ?? 'draft');
 
   const text = `
     INSERT INTO offers (id${insertColumns.length ? ',' + insertColumns.join(',') : ''})
     VALUES (gen_random_uuid()${params.length ? ',' + params.join(',') : ''})
-    RETURNING id${columns.has('title') ? ', title' : ''}${
-    !columns.has('title') && columns.has('name') ? ', name' : ''
-  }${columns.has('budget_cents') ? ', budget_cents' : ''}${columns.has('budget_xtr') ? ', budget_xtr' : ''}
+    RETURNING id${columns.has('title') ? ', title' : ''}${!columns.has('title') && columns.has('name') ? ', name' : ''}${
+      columns.has('budget_cents') ? ', budget_cents' : ''}${columns.has('budget_xtr') ? ', budget_xtr' : ''}
   `;
 
   const ins = await query(text, values);
@@ -253,14 +219,11 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   };
 
   const amountInStars = offer.budget_xtr || centsToXtr(offer.budget_cents);
-  const invoiceTitle = `Оплата оффера: ${offer.title || offer.id}`;
-  const invoiceDescription = `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`;
-
   await ctx.replyWithInvoice({
-    title: invoiceTitle,
-    description: invoiceDescription,
+    title: `Оплата оффера: ${offer.title || offer.id}`,
+    description: `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`,
     payload: String(offer.id),
-    provider_token: '',
+    provider_token: '', // Stars не требует токен провайдера
     currency: 'XTR',
     prices: [{ label: 'Budget', amount: amountInStars }],
     start_parameter: String(offer.id),
@@ -271,13 +234,15 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     [
       '✅ Оффер создан. Счёт выставлен через Telegram Stars.',
       `ID: <code>${offer.id}</code>`,
-      'После успешной оплаты оффер станет <b>active</b>.',
+      'После оплаты оффер станет <b>active</b>.',
     ].join('\n'),
     { disable_web_page_preview: true },
   );
 
   return offer;
 }
+
+
 
 bot.use(async (ctx, next) => {
   const { updateType } = ctx;
