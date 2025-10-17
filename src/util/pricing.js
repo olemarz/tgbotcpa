@@ -1,87 +1,42 @@
-const DEFAULT_MARKUP_PERCENT = (() => {
-  const raw = process.env.GEO_MARKUP_DEFAULT_PERCENT;
-  if (!raw) return 0;
-  const parsed = Number.parseFloat(String(raw));
-  return Number.isFinite(parsed) ? parsed : 0;
-})();
+// src/util/pricing.js
+// Политика ценообразования из ТЗ:
+// - если рекламодатель ввёл GEO из списка HIGH_GEO_LIST → цена целевого действия +30%
+// - округление всегда ВВЕРХ (Math.ceil)
+// - GEO может прийти как строка "US, CA" или как массив ["US","CA"]
 
-function parseMarkupConfig(raw) {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return Object.fromEntries(
-        Object.entries(parsed).map(([key, value]) => [key.trim().toUpperCase(), Number(value)]),
-      );
-    }
-  } catch (_error) {
-    // fallback to custom delimiter-based parsing below
-  }
+const HIGH_GEO = (process.env.HIGH_GEO_LIST || '')
+  .split(',')
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
 
-  const result = {};
-  const parts = String(raw)
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  for (const part of parts) {
-    const [code, percent] = part.split(':').map((token) => token.trim());
-    if (!code || percent === undefined) continue;
-    const numeric = Number.parseFloat(percent);
-    if (!Number.isFinite(numeric)) continue;
-    result[code.toUpperCase()] = numeric;
-  }
-
-  return result;
-}
-
-const GEO_MARKUP_PERCENT = (() => {
-  const raw =
-    process.env.GEO_MARKUP_PERCENT_JSON ||
-    process.env.GEO_MARKUP_JSON ||
-    process.env.GEO_MARKUP_PERCENT ||
-    process.env.GEO_MARKUPS_PERCENT ||
-    '';
-  return parseMarkupConfig(raw);
-})();
-
-function normalizeGeoList(geo) {
+function normalizeGeo(geo) {
   if (!geo) return [];
   if (Array.isArray(geo)) {
-    return geo
-      .map((value) => (typeof value === 'string' ? value.trim().toUpperCase() : ''))
-      .filter(Boolean);
+    return geo.map((v) => String(v || '').trim().toUpperCase()).filter(Boolean);
   }
-  if (typeof geo === 'string') {
-    return geo
-      .split(/[,\s]+/)
-      .map((part) => part.trim().toUpperCase())
-      .filter(Boolean);
-  }
-  return [];
+  return String(geo)
+    .split(/[,\s]+/)
+    .map((p) => p.trim().toUpperCase())
+    .filter(Boolean);
 }
 
-export function adjustPayoutCents(basePayoutCents, geo) {
-  const base = Number.isFinite(Number(basePayoutCents)) ? Number(basePayoutCents) : 0;
-  const codes = normalizeGeoList(geo);
+/**
+ * @param {number} baseCents - базовая цена в центах
+ * @param {string|string[]} geo - GEO код(ы): "US,CA" или ["US","CA"]
+ * @returns {number} скорректированная цена в центах
+ */
+export function adjustPayoutCents(baseCents, geo) {
+  const n = Math.max(0, Number(baseCents || 0));
+  if (!n) return 0;
 
-  let bestPercent = DEFAULT_MARKUP_PERCENT;
+  const codes = normalizeGeo(geo);
+  if (!codes.length || !HIGH_GEO.length) return n;
 
-  for (const code of codes) {
-    const percent = GEO_MARKUP_PERCENT[code];
-    if (typeof percent === 'number' && Number.isFinite(percent)) {
-      if (percent > bestPercent) {
-        bestPercent = percent;
-      }
-    }
-  }
+  const hasHigh = codes.some((code) => HIGH_GEO.includes(code));
+  if (!hasHigh) return n;
 
-  if (!bestPercent) {
-    return Math.max(0, Math.round(base));
-  }
-
-  const multiplier = 1 + bestPercent / 100;
-  return Math.max(0, Math.round(base * multiplier));
+  // +30% и ВСЕГДА вверх
+  return Math.ceil(n * 1.3);
 }
 
 export default adjustPayoutCents;
