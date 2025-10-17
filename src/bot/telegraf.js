@@ -333,7 +333,7 @@ bot.start(async (ctx) => {
 
   await replyHtml(
     ctx,
-    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:<br/><code>/claim &lt;TOKEN&gt;</code>',
+    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:<br><code>/claim &lt;TOKEN&gt;</code>',
   );
 });
 
