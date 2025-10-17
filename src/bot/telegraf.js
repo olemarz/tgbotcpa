@@ -7,6 +7,7 @@ import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { adjustPayoutCents } from '../util/pricing.js';
+import { centsToXtr } from '../util/xtr.js';
 import { registerStatHandlers } from './stat.js';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
@@ -110,10 +111,17 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const geo = form?.geo ?? null;
   const payoutAdjusted = adjustPayoutCents(basePayoutCents, geo);
 
-  const providedBudget = Number.isFinite(Number(form?.budget_cents))
+  const providedBudgetCents = Number.isFinite(Number(form?.budget_cents))
     ? Number(form.budget_cents)
     : 0;
-  const normalizedBudget = providedBudget > 0 ? providedBudget : payoutAdjusted;
+  const normalizedBudgetCents = providedBudgetCents > 0 ? providedBudgetCents : payoutAdjusted;
+
+  const providedBudgetXtr = Number.isFinite(Number(form?.budget_xtr))
+    ? Number(form.budget_xtr)
+    : null;
+  const normalizedBudgetXtr = providedBudgetXtr && providedBudgetXtr > 0
+    ? Math.floor(providedBudgetXtr)
+    : centsToXtr(normalizedBudgetCents);
 
   const insertColumns = [];
   const values = [];
@@ -144,7 +152,7 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     push('target_link', form.target_link);
   }
   if (columns.has('event_type')) {
-    push('event_type', form?.event_type ?? null);
+    push('event_type', form?.event_type ?? 'join_group');
   }
 
   if (columns.has('payout_cents')) {
@@ -196,7 +204,10 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   }
 
   if (columns.has('budget_cents')) {
-    push('budget_cents', normalizedBudget);
+    push('budget_cents', normalizedBudgetCents);
+  }
+  if (columns.has('budget_xtr')) {
+    push('budget_xtr', normalizedBudgetXtr);
   }
 
   const geoNormalized = normalizeGeoForInsert(geo);
@@ -229,7 +240,7 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     VALUES (gen_random_uuid()${params.length ? ',' + params.join(',') : ''})
     RETURNING id${columns.has('title') ? ', title' : ''}${
     !columns.has('title') && columns.has('name') ? ', name' : ''
-  }${columns.has('budget_cents') ? ', budget_cents' : ''}
+  }${columns.has('budget_cents') ? ', budget_cents' : ''}${columns.has('budget_xtr') ? ', budget_xtr' : ''}
   `;
 
   const ins = await query(text, values);
@@ -237,12 +248,13 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const offer = {
     id: row.id,
     title: row.title ?? row.name ?? title ?? row.id,
-    budget_cents: columns.has('budget_cents') ? row.budget_cents ?? normalizedBudget : normalizedBudget,
+    budget_cents: columns.has('budget_cents') ? row.budget_cents ?? normalizedBudgetCents : normalizedBudgetCents,
+    budget_xtr: columns.has('budget_xtr') ? row.budget_xtr ?? normalizedBudgetXtr : normalizedBudgetXtr,
   };
 
+  const amountInStars = offer.budget_xtr || centsToXtr(offer.budget_cents);
   const invoiceTitle = `Оплата оффера: ${offer.title || offer.id}`;
-  const invoiceDescription = `Бюджет ${(offer.budget_cents / 100).toFixed(2)} ₽. Payout ${(payoutAdjusted / 100).toFixed(2)} ₽`;
-  const amountInStars = Math.max(1, Math.ceil(offer.budget_cents / 100));
+  const invoiceDescription = `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`;
 
   await ctx.replyWithInvoice({
     title: invoiceTitle,
@@ -254,13 +266,14 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     start_parameter: String(offer.id),
   });
 
-  await ctx.reply(
+  await replyHtml(
+    ctx,
     [
       '✅ Оффер создан. Счёт выставлен через Telegram Stars.',
       `ID: <code>${offer.id}</code>`,
       'После успешной оплаты оффер станет <b>active</b>.',
     ].join('\n'),
-    { parse_mode: 'HTML', disable_web_page_preview: true },
+    { disable_web_page_preview: true },
   );
 
   return offer;
@@ -560,7 +573,7 @@ bot.on('pre_checkout_query', async (ctx) => {
   try {
     await ctx.answerPreCheckoutQuery(true);
   } catch (e) {
-    console.error('pre_checkout_query error', e?.message || e);
+    console.error('pre_checkout_query', e);
   }
 });
 
@@ -569,43 +582,90 @@ bot.on('message', async (ctx, next) => {
   if (!sp) return next?.();
   try {
     const offerId = sp.invoice_payload;
-    const paidStars = Number(sp.total_amount || 0);
-    const paidCents = paidStars * 100;
+    const paidXtr = Number(sp.total_amount || 0);
+
+    if (!offerId) {
+      await ctx.reply('⚠️ Оплата получена, но оффер не найден. Свяжитесь с поддержкой.');
+      return;
+    }
 
     const columns = await getOfferColumns();
-    if (!columns.has('paid_cents')) {
-      console.warn('[payment] paid_cents column missing; skipping offer update');
+
+    const values = [offerId];
+    const updateParts = [];
+    const returning = ['id'];
+    const increments = {};
+
+    if (columns.has('paid_xtr')) {
+      values.push(paidXtr);
+      increments.paid_xtr = values.length;
+      updateParts.push(`paid_xtr = COALESCE(paid_xtr,0) + $${values.length}`);
+      returning.push('paid_xtr');
+    }
+
+    if (columns.has('paid_cents')) {
+      const paidCents = paidXtr * 100;
+      values.push(paidCents);
+      increments.paid_cents = values.length;
+      updateParts.push(`paid_cents = COALESCE(paid_cents,0) + $${values.length}`);
+      returning.push('paid_cents');
+    }
+
+    if (!updateParts.length) {
+      console.warn('[payment] no columns to update; skipping offer update');
       await ctx.reply('💳 Оплата получена, но обновление статуса оффера недоступно. Свяжитесь с поддержкой.');
       return;
     }
 
-    const updateParts = [`paid_cents = COALESCE(paid_cents,0) + $2`];
-    if (columns.has('status') && columns.has('budget_cents')) {
-      updateParts.push(`status = CASE WHEN COALESCE(paid_cents,0)+$2 >= budget_cents THEN 'active' ELSE status END`);
+    if (columns.has('status')) {
+      if (columns.has('budget_xtr') && increments.paid_xtr) {
+        updateParts.push(
+          `status = CASE WHEN COALESCE(paid_xtr,0) + $${increments.paid_xtr} >= COALESCE(budget_xtr,0) THEN 'active' ELSE status END`,
+        );
+      } else if (columns.has('budget_cents') && increments.paid_cents) {
+        updateParts.push(
+          `status = CASE WHEN COALESCE(paid_cents,0) + $${increments.paid_cents} >= COALESCE(budget_cents,0) THEN 'active' ELSE status END`,
+        );
+      }
+      returning.push('status');
     }
 
-    const returning = ['id'];
-    if (columns.has('status')) returning.push('status');
-    if (columns.has('paid_cents')) returning.push('paid_cents');
-    if (columns.has('budget_cents')) returning.push('budget_cents');
+    if (columns.has('budget_xtr')) {
+      returning.push('budget_xtr');
+    }
+    if (columns.has('budget_cents')) {
+      returning.push('budget_cents');
+    }
 
     const result = await query(
-      `UPDATE offers SET ${updateParts.join(', ')} WHERE id=$1 RETURNING ${returning.join(', ')}`,
-      [offerId, paidCents],
+      `UPDATE offers SET ${updateParts.join(', ')} WHERE id=$1 RETURNING ${[...new Set(returning)].join(', ')}`,
+      values,
     );
 
-    if (result.rowCount) {
-      const row = result.rows[0];
-      const paidValue = columns.has('paid_cents') ? row.paid_cents : paidCents;
-      const status = columns.has('status') ? row.status : 'active';
-      await ctx.reply(
-        `💳 Оплата принята. Оффер ${row.id} → ${status}. Оплачено: ${((paidValue || 0) / 100).toFixed(2)} ₽`,
-      );
-    } else {
+    if (!result.rowCount) {
       await ctx.reply('⚠️ Оплата получена, но оффер не найден. Свяжитесь с поддержкой.');
+      return;
     }
+
+    const row = result.rows[0];
+    const status = columns.has('status') ? row.status ?? 'active' : 'active';
+    const paidValueXtr = columns.has('paid_xtr') ? Number(row.paid_xtr ?? 0) : null;
+    const budgetValueXtr = columns.has('budget_xtr') ? Number(row.budget_xtr ?? 0) : null;
+
+    let summary;
+    if (paidValueXtr != null) {
+      const budgetText = budgetValueXtr ? `/${budgetValueXtr}` : '';
+      summary = `${paidValueXtr}${budgetText} XTR`;
+    } else {
+      const paidCents = columns.has('paid_cents') ? Number(row.paid_cents ?? 0) : paidXtr * 100;
+      const budgetCents = columns.has('budget_cents') ? Number(row.budget_cents ?? 0) : 0;
+      const budgetText = budgetCents ? `/${(budgetCents / 100).toFixed(2)} ₽` : '';
+      summary = `${(paidCents / 100).toFixed(2)} ₽${budgetText}`;
+    }
+
+    await ctx.reply(`💳 Оплата принята. Оффер ${row.id} → ${status}. Оплачено: ${summary}`);
   } catch (e) {
-    console.error('successful_payment handler error', e?.message || e);
+    console.error('successful_payment handler', e);
   }
 });
 
