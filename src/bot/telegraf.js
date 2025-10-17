@@ -68,6 +68,38 @@ async function replyHtml(ctx, html, extra = {}) {
   return ctx.reply(html, { parse_mode: 'HTML', ...extra });
 }
 
+function isAdminCtx(ctx) {
+  const adminId = Number(process.env.ADMIN_TG_ID || 0);
+  return adminId && ctx.from?.id && Number(ctx.from.id) === adminId;
+}
+
+bot.command('admin_offers', async (ctx) => {
+  if (!isAdminCtx(ctx)) return;
+  const r = await query(
+    `SELECT id, title, status, budget_cents, paid_cents, payout_cents, created_by_tg_id
+       FROM offers
+      ORDER BY created_at DESC
+      LIMIT 20`,
+  );
+  if (!r.rowCount) return ctx.reply('Пусто');
+  const lines = r.rows.map(
+    (o) =>
+      `• <code>${o.id}</code> — ${o.title || '(без названия)'} [${o.status}] ` +
+      `бюджет ${(o.budget_cents / 100).toFixed(2)} ₽, оплачено ${(o.paid_cents / 100).toFixed(2)} ₽, payout ${(o.payout_cents / 100).toFixed(2)} ₽`,
+  );
+  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+});
+
+bot.command('offer_status', async (ctx) => {
+  if (!isAdminCtx(ctx)) return;
+  const m = (ctx.message?.text || '').match(/^\/offer_status\s+([0-9a-f-]{36})\s+(active|paused|stopped|draft)$/i);
+  if (!m) return ctx.reply('Формат: /offer_status <UUID> <active|paused|stopped|draft>');
+  const [, id, st] = m;
+  const r = await query(`UPDATE offers SET status=$2 WHERE id=$1 RETURNING id,status`, [id, st.toLowerCase()]);
+  if (!r.rowCount) return ctx.reply('Не найдено');
+  await ctx.reply(`OK: ${r.rows[0].id} → ${r.rows[0].status}`);
+});
+
 bot.use(async (ctx, next) => {
   const { updateType } = ctx;
   const text = ctx.update?.message?.text;
