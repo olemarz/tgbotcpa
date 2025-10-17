@@ -20,8 +20,8 @@ describe('CPA offers API', () => {
   beforeEach(async () => {
     await query('DELETE FROM offers');
     const result = await query(
-      `INSERT INTO offers (target_url, event_type, name, caps_total, base_rate, premium_rate)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO offers (target_url, event_type, name, caps_total, base_rate, premium_rate, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         'https://t.me/example_channel/123',
@@ -30,6 +30,7 @@ describe('CPA offers API', () => {
         150,
         100,
         200,
+        'active',
       ]
     );
     offerId = result.rows[0].id;

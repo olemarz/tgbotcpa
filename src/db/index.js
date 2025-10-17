@@ -9,6 +9,7 @@ let pool;
 if (config.dbUrl.startsWith('pgmem://')) {
   const { newDb } = await import('pg-mem');
   const db = newDb({ autoCreateForeignKeyIndices: true });
+  db.registerLanguage('plpgsql', () => () => {});
   db.public.registerFunction({
     name: 'gen_random_uuid',
     returns: 'uuid',
