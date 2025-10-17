@@ -1,19 +1,42 @@
-// +30% для выделенных GEO, округление всегда вверх
+// src/util/pricing.js
+// Политика ценообразования из ТЗ:
+// - если рекламодатель ввёл GEO из списка HIGH_GEO_LIST → цена целевого действия +30%
+// - округление всегда ВВЕРХ (Math.ceil)
+// - GEO может прийти как строка "US, CA" или как массив ["US","CA"]
+
 const HIGH_GEO = (process.env.HIGH_GEO_LIST || '')
   .split(',')
-  .map(s => s.trim().toUpperCase())
+  .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
+function normalizeGeo(geo) {
+  if (!geo) return [];
+  if (Array.isArray(geo)) {
+    return geo.map((v) => String(v || '').trim().toUpperCase()).filter(Boolean);
+  }
+  return String(geo)
+    .split(/[,\s]+/)
+    .map((p) => p.trim().toUpperCase())
+    .filter(Boolean);
+}
+
 /**
- * Корректирует payout в центах:
- * - если geo ∈ HIGH_GEO → *1.3 и Math.ceil
- * - иначе — без изменений
+ * @param {number} baseCents - базовая цена в центах
+ * @param {string|string[]} geo - GEO код(ы): "US,CA" или ["US","CA"]
+ * @returns {number} скорректированная цена в центах
  */
 export function adjustPayoutCents(baseCents, geo) {
   const n = Math.max(0, Number(baseCents || 0));
-  const g = String(geo || '').trim().toUpperCase();
-  if (!g || HIGH_GEO.length === 0) return n;
-  if (!HIGH_GEO.includes(g)) return n;
-  const bumped = n * 1.3;
-  return Math.ceil(bumped);
+  if (!n) return 0;
+
+  const codes = normalizeGeo(geo);
+  if (!codes.length || !HIGH_GEO.length) return n;
+
+  const hasHigh = codes.some((code) => HIGH_GEO.includes(code));
+  if (!hasHigh) return n;
+
+  // +30% и ВСЕГДА вверх
+  return Math.ceil(n * 1.3);
 }
+
+export default adjustPayoutCents;

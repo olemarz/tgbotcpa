@@ -6,6 +6,7 @@ import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
+import { adjustPayoutCents } from '../util/pricing.js';
 import { registerStatHandlers } from './stat.js';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
@@ -66,6 +67,203 @@ function escapeHtml(value) {
 
 async function replyHtml(ctx, html, extra = {}) {
   return ctx.reply(html, { parse_mode: 'HTML', ...extra });
+}
+
+let offersColumnsPromise;
+async function getOfferColumns() {
+  if (!offersColumnsPromise) {
+    offersColumnsPromise = query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'offers'`,
+    ).then((res) => new Set(res.rows.map((row) => row.column_name)));
+  }
+  return offersColumnsPromise;
+}
+
+function normalizeGeoForInsert(geo) {
+  const list = (() => {
+    if (!geo) return [];
+    if (Array.isArray(geo)) {
+      return geo
+        .map((value) => (typeof value === 'string' ? value.trim().toUpperCase() : ''))
+        .filter(Boolean);
+    }
+    if (typeof geo === 'string') {
+      return geo
+        .split(/[,\s]+/)
+        .map((part) => part.trim().toUpperCase())
+        .filter(Boolean);
+    }
+    return [];
+  })();
+
+  const geoInput = list.length ? list.join(',') : null;
+  return { list: list.length ? list : null, input: geoInput };
+}
+
+export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
+  const columns = await getOfferColumns();
+  const tgId = ctx.from?.id ?? null;
+
+  const basePayoutCents = Number.isFinite(Number(form?.payout_cents))
+    ? Number(form.payout_cents)
+    : 0;
+  const geo = form?.geo ?? null;
+  const payoutAdjusted = adjustPayoutCents(basePayoutCents, geo);
+
+  const providedBudget = Number.isFinite(Number(form?.budget_cents))
+    ? Number(form.budget_cents)
+    : 0;
+  const normalizedBudget = providedBudget > 0 ? providedBudget : payoutAdjusted;
+
+  const insertColumns = [];
+  const values = [];
+  const params = [];
+
+  const push = (column, value) => {
+    if (!columns.has(column)) return;
+    insertColumns.push(column);
+    values.push(value);
+    params.push(`$${values.length}`);
+  };
+
+  const title = form?.title ?? form?.name ?? null;
+  if (columns.has('title')) {
+    push('title', title);
+  } else if (columns.has('name')) {
+    push('name', title);
+  }
+
+  if (form?.slug != null) {
+    push('slug', form.slug);
+  }
+
+  if (columns.has('target_url')) {
+    push('target_url', form?.target_url ?? null);
+  }
+  if (columns.has('target_link') && form?.target_link != null) {
+    push('target_link', form.target_link);
+  }
+  if (columns.has('event_type')) {
+    push('event_type', form?.event_type ?? null);
+  }
+
+  if (columns.has('payout_cents')) {
+    push('payout_cents', payoutAdjusted);
+  }
+
+  const baseRateRub = Number.isFinite(Number(form?.base_rate_rub))
+    ? Number(form.base_rate_rub)
+    : Number.isFinite(Number(form?.base_rate))
+      ? Number(form.base_rate)
+      : null;
+  const baseRateCents = Number.isFinite(Number(form?.base_rate_cents))
+    ? Number(form.base_rate_cents)
+    : baseRateRub != null
+      ? Math.round(baseRateRub * 100)
+      : null;
+
+  if (columns.has('base_rate')) {
+    if (baseRateCents != null) {
+      push('base_rate', baseRateCents);
+    } else if (baseRateRub != null) {
+      push('base_rate', baseRateRub);
+    } else if (!columns.has('payout_cents')) {
+      push('base_rate', Math.round(payoutAdjusted / 100));
+    }
+  }
+
+  const premiumRateRub = Number.isFinite(Number(form?.premium_rate_rub))
+    ? Number(form.premium_rate_rub)
+    : Number.isFinite(Number(form?.premium_rate))
+      ? Number(form.premium_rate)
+      : null;
+  const premiumRateCents = Number.isFinite(Number(form?.premium_rate_cents))
+    ? Number(form.premium_rate_cents)
+    : premiumRateRub != null
+      ? Math.round(premiumRateRub * 100)
+      : null;
+
+  if (columns.has('premium_rate')) {
+    if (premiumRateCents != null) {
+      push('premium_rate', premiumRateCents);
+    } else if (premiumRateRub != null) {
+      push('premium_rate', premiumRateRub);
+    }
+  }
+
+  if (columns.has('caps_total') && form?.caps_total != null) {
+    push('caps_total', form.caps_total);
+  }
+
+  if (columns.has('budget_cents')) {
+    push('budget_cents', normalizedBudget);
+  }
+
+  const geoNormalized = normalizeGeoForInsert(geo);
+  if (columns.has('geo')) {
+    push('geo', Array.isArray(geoNormalized.list) ? geoNormalized.list.join(',') : geoNormalized.input);
+  }
+  if (columns.has('geo_input') && geoNormalized.input !== null) {
+    push('geo_input', geoNormalized.input);
+  }
+  if (columns.has('geo_list') && geoNormalized.list) {
+    push('geo_list', geoNormalized.list);
+  }
+  if (columns.has('geo_whitelist') && geoNormalized.list) {
+    push('geo_whitelist', geoNormalized.list);
+  }
+
+  if (columns.has('created_by_tg')) {
+    push('created_by_tg', tgId);
+  }
+  if (columns.has('created_by_tg_id')) {
+    push('created_by_tg_id', tgId);
+  }
+
+  if (columns.has('status')) {
+    push('status', form?.status ?? 'draft');
+  }
+
+  const text = `
+    INSERT INTO offers (id${insertColumns.length ? ',' + insertColumns.join(',') : ''})
+    VALUES (gen_random_uuid()${params.length ? ',' + params.join(',') : ''})
+    RETURNING id${columns.has('title') ? ', title' : ''}${
+    !columns.has('title') && columns.has('name') ? ', name' : ''
+  }${columns.has('budget_cents') ? ', budget_cents' : ''}
+  `;
+
+  const ins = await query(text, values);
+  const row = ins.rows[0] || {};
+  const offer = {
+    id: row.id,
+    title: row.title ?? row.name ?? title ?? row.id,
+    budget_cents: columns.has('budget_cents') ? row.budget_cents ?? normalizedBudget : normalizedBudget,
+  };
+
+  const invoiceTitle = `Оплата оффера: ${offer.title || offer.id}`;
+  const invoiceDescription = `Бюджет ${(offer.budget_cents / 100).toFixed(2)} ₽. Payout ${(payoutAdjusted / 100).toFixed(2)} ₽`;
+  const amountInStars = Math.max(1, Math.ceil(offer.budget_cents / 100));
+
+  await ctx.replyWithInvoice({
+    title: invoiceTitle,
+    description: invoiceDescription,
+    payload: String(offer.id),
+    provider_token: '',
+    currency: 'XTR',
+    prices: [{ label: 'Budget', amount: amountInStars }],
+    start_parameter: String(offer.id),
+  });
+
+  await ctx.reply(
+    [
+      '✅ Оффер создан. Счёт выставлен через Telegram Stars.',
+      `ID: <code>${offer.id}</code>`,
+      'После успешной оплаты оффер станет <b>active</b>.',
+    ].join('\n'),
+    { parse_mode: 'HTML', disable_web_page_preview: true },
+  );
+
+  return offer;
 }
 
 bot.use(async (ctx, next) => {
@@ -129,7 +327,7 @@ bot.start(async (ctx) => {
 bot.command('ads', async (ctx) => {
   logUpdate(ctx, 'ads');
   try {
-    await startAdsWizard(ctx, {});
+    await startAdsWizard(ctx, { finalizeOffer: finalizeOfferAndInvoiceStars });
     console.log('[ADS] wizard started');
   } catch (error) {
     console.error('[ADS] start error:', error?.message || error);
@@ -195,11 +393,11 @@ export async function handleStartWithToken(ctx, rawToken) {
         reply_markup: { inline_keyboard: [[{ text: '✅ Вступить в группу', url: target_url }]] },
       },
     );
-    await replyHtml(ctx, 'Новая задача доступна: <code>/ads</code>');
+    await replyHtml(ctx, 'Новая задача доступна: /ads');
     return;
   }
 
-  await replyHtml(ctx, 'Новая задача доступна: <code>/ads</code>');
+  await replyHtml(ctx, 'Новая задача доступна: /ads');
 }
 
 export async function handleClaimCommand(ctx) {
@@ -355,6 +553,59 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
     await approveJoin({ offer_id, tg_id: tgId, click_id: attrClickId });
   } catch (error) {
     console.error('approveJoin error:', error?.message || error);
+  }
+});
+
+bot.on('pre_checkout_query', async (ctx) => {
+  try {
+    await ctx.answerPreCheckoutQuery(true);
+  } catch (e) {
+    console.error('pre_checkout_query error', e?.message || e);
+  }
+});
+
+bot.on('message', async (ctx, next) => {
+  const sp = ctx.message?.successful_payment;
+  if (!sp) return next?.();
+  try {
+    const offerId = sp.invoice_payload;
+    const paidStars = Number(sp.total_amount || 0);
+    const paidCents = paidStars * 100;
+
+    const columns = await getOfferColumns();
+    if (!columns.has('paid_cents')) {
+      console.warn('[payment] paid_cents column missing; skipping offer update');
+      await ctx.reply('💳 Оплата получена, но обновление статуса оффера недоступно. Свяжитесь с поддержкой.');
+      return;
+    }
+
+    const updateParts = [`paid_cents = COALESCE(paid_cents,0) + $2`];
+    if (columns.has('status') && columns.has('budget_cents')) {
+      updateParts.push(`status = CASE WHEN COALESCE(paid_cents,0)+$2 >= budget_cents THEN 'active' ELSE status END`);
+    }
+
+    const returning = ['id'];
+    if (columns.has('status')) returning.push('status');
+    if (columns.has('paid_cents')) returning.push('paid_cents');
+    if (columns.has('budget_cents')) returning.push('budget_cents');
+
+    const result = await query(
+      `UPDATE offers SET ${updateParts.join(', ')} WHERE id=$1 RETURNING ${returning.join(', ')}`,
+      [offerId, paidCents],
+    );
+
+    if (result.rowCount) {
+      const row = result.rows[0];
+      const paidValue = columns.has('paid_cents') ? row.paid_cents : paidCents;
+      const status = columns.has('status') ? row.status : 'active';
+      await ctx.reply(
+        `💳 Оплата принята. Оффер ${row.id} → ${status}. Оплачено: ${((paidValue || 0) / 100).toFixed(2)} ₽`,
+      );
+    } else {
+      await ctx.reply('⚠️ Оплата получена, но оффер не найден. Свяжитесь с поддержкой.');
+    }
+  } catch (e) {
+    console.error('successful_payment handler error', e?.message || e);
   }
 });
 
