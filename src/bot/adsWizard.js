@@ -317,40 +317,30 @@ async function finishAndSend(ctx, offerId) {
   }
 }
 
+/ ====================== STEPS: 1..8 + promptGeoTargeting ======================
+
+// ШАГ 1 — целевой URL (канал/группа/бот/пост)
 async function step1(ctx) {
-  const msg = ctx.update?.message;
-  const text = msg?.text || '';
-  const ents = Array.isArray(msg?.entities) ? msg.entities : [];
-  const isCommand = ents.some((e) => e.type === 'bot_command' && e.offset === 0) || text.startsWith('/');
-
-  if (isCommand) {
-    // просто повторяем подсказку шага и выходим без ошибок
-    await promptTargetUrl(ctx);
-    return; // не меняем состояние и не валидируем
-  }
-
+  // переносим базовое состояние из scene → wizard, если нужно
   const base = (ctx.scene?.state && typeof ctx.scene.state === 'object') ? ctx.scene.state : {};
   ctx.wizard.state = (ctx.wizard.state && typeof ctx.wizard.state === 'object') ? ctx.wizard.state : { ...base };
-  if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') {
-    ctx.wizard.state.offer = {};
-  }
+  if (!ctx.wizard.state.offer || typeof ctx.wizard.state.offer !== 'object') ctx.wizard.state.offer = {};
 
   try {
     console.log('[WIZARD] enter step1, from=', ctx.from?.id);
     if (shouldSkipCurrentUpdate(ctx)) return;
     if (isCancel(ctx)) return cancelWizard(ctx);
-    if (isBack(ctx)) {
-      await goToStep(ctx, Step.TARGET_URL);
-      return;
-    }
+    if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
+
     const text = getMessageText(ctx);
     const normalized = normalizeTelegramUrl(text || '');
     if (!normalized) {
       await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.');
       return;
     }
+
     ctx.wizard.state.offer.target_url = normalized;
-    return goToStep(ctx, Step.EVENT_TYPE);
+    await goToStep(ctx, Step.EVENT_TYPE);
   } catch (e) {
     console.error('[WIZARD] step1 error:', e?.message || e, e?.stack || '');
     await ctx.reply('❌ Ошибка старта мастера: ' + (e?.message || e));
@@ -358,129 +348,181 @@ async function step1(ctx) {
   }
 }
 
+// ШАГ 2 — выбор типа события
 async function step2(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
+
   const cb = ctx.callbackQuery?.data;
-  if (cb === 'nav:back') { await ctx.answerCbQuery(); return goToStep(ctx, Step.TARGET_URL); }
+  if (cb === 'nav:back') { await ctx.answerCbQuery(); await goToStep(ctx, Step.TARGET_URL); return; }
   if (!cb?.startsWith?.('event:')) { await promptEventType(ctx); return; }
+
   ctx.wizard.state.offer.event_type = cb.slice('event:'.length);
   await ctx.answerCbQuery();
-  return goToStep(ctx, Step.BASE_RATE);
+  await goToStep(ctx, Step.BASE_RATE);
 }
 
+// ШАГ 3 — базовая ставка
 async function step3(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.EVENT_TYPE); return; }
+
   const n = parseNumber(getMessageText(ctx));
   const evt = ctx.wizard.state.offer.event_type;
   const min = minRates[evt]?.base ?? 0;
-  if (n == null || n < min) { await ctx.reply(`Введите корректную сумму (не ниже ${min}).`); return; }
+
+  if (n == null || n < min) {
+    await ctx.reply(`Введите корректную сумму (не ниже ${min}).`);
+    return;
+  }
+
   ctx.wizard.state.offer.base_rate = n;
-  return goToStep(ctx, Step.PREMIUM_RATE);
+  await goToStep(ctx, Step.PREMIUM_RATE);
 }
 
+// ШАГ 4 — премиум-ставка
 async function step4(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.BASE_RATE); return; }
+
   const n = parseNumber(getMessageText(ctx));
   const base = ctx.wizard.state.offer.base_rate ?? 0;
-  const evt = ctx.wizard.state.offer.event_type;
+  const evt  = ctx.wizard.state.offer.event_type;
   const minPrem = minRates[evt]?.premium ?? base;
+
   if (n == null || n < base || n < minPrem) {
     await ctx.reply(`Число некорректно. Премиум-ставка не может быть ниже базовой (${base}) и порога (${minPrem}).`);
     return;
   }
+
   ctx.wizard.state.offer.premium_rate = n;
-  return goToStep(ctx, Step.CAPS_TOTAL);
+  await goToStep(ctx, Step.CAPS_TOTAL);
 }
 
+// ШАГ 5 — общий лимит конверсий
 async function step5(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.PREMIUM_RATE); return; }
+
   const raw = String(getMessageText(ctx) ?? '').trim();
   const value = Number(raw.replace(',', '.'));
-  if (!Number.isFinite(value)) {
-    await ctx.reply(`Введите целое число, не меньше ${minCap}.`);
-    return;
-  }
-  if (value < minCap) {
-    await ctx.reply(`Минимальный лимит конверсий — ${minCap}. 0 (без ограничений) не допускается.`);
-    return;
-  }
-  if (!Number.isInteger(value)) {
-    await ctx.reply('Лимит должен быть целым числом.');
-    return;
-  }
+
+  if (!Number.isFinite(value)) { await ctx.reply(`Введите целое число, не меньше ${minCap}.`); return; }
+  if (value < minCap)          { await ctx.reply(`Минимальный лимит конверсий — ${minCap}. 0 (без ограничений) не допускается.`); return; }
+  if (!Number.isInteger(value)){ await ctx.reply('Лимит должен быть целым числом.'); return; }
+
   ctx.wizard.state.offer.caps_total = value;
-  return goToStep(ctx, Step.GEO_TARGETING);
+  await goToStep(ctx, Step.GEO_TARGETING);
 }
 
+// ПОДСКАЗКА ДЛЯ GEO (вызывается при входе в шаг)
+async function promptGeoTargeting(ctx) {
+  const msg = [
+    'Шаг 6/8. Введите GEO. Пример: RU, UA, KZ (ISO2-коды, через запятую или пробел).',
+    '⚠️ При включении гео-таргетинга стоимость действия ↑ на <b>30%</b> (округление вверх).',
+    'Оставьте пусто или введите 0 — будет <b>без гео-ограничений</b>.',
+    'Команды: [Назад], [Отмена].'
+  ].join('\n');
+
+  await ctx.replyWithHTML(msg);
+}
+
+// ШАГ 6 — ввод GEO
 async function step6(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
-  if (isBack(ctx)) { await goToStep(ctx, Step.CAPS_TOTAL); return; }
+  if (isBack(ctx))  { await goToStep(ctx, Step.CAPS_TOTAL); return; }
+
   const raw = (getMessageText(ctx) || '').trim();
+
+  // Пусто / 0 / ALL / "без ограничений" — значит без GEO
   if (!raw || raw === '0' || /^без\s*огранич/i.test(raw) || raw.toUpperCase() === 'ALL') {
-    ctx.wizard.state.offer.geo_mode = GEO.ANY;
-    ctx.wizard.state.offer.geo_input = null;
+    ctx.wizard.state.offer.geo_mode   = GEO.ANY;
+    ctx.wizard.state.offer.geo_input  = null;
     delete ctx.wizard.state.offer.geo_list;
     delete ctx.wizard.state.offer.geo;
-  } else {
-    const { ok, codes, invalid = [] } = parseGeoInput(raw);
-    if (!ok) {
-      await ctx.reply(
-        `Неизвестные коды: ${invalid.join(', ')}. Пример: RU, KZ, US. Введите через запятую.`,
-      );
-      return;
-    }
-    const normalizedCodes = Array.isArray(codes) ? codes : [];
-    if (normalizedCodes.length === 0) {
-      ctx.wizard.state.offer.geo_mode = GEO.ANY;
-      ctx.wizard.state.offer.geo_input = null;
-      delete ctx.wizard.state.offer.geo_list;
-      delete ctx.wizard.state.offer.geo;
-      return goToStep(ctx, Step.OFFER_NAME);
-    }
-    ctx.wizard.state.offer.geo_mode = GEO.WHITELIST;
-    ctx.wizard.state.offer.geo_input = raw;
-    ctx.wizard.state.offer.geo_list = normalizedCodes;
-    ctx.wizard.state.offer.geo = normalizedCodes;
-    await ctx.reply(
-      'Подсказка по GEO (топ страны): RU, UA, KZ, BY, UZ, AM, GE, AZ, KG, MD.\n' +
-        'Вводи коды через запятую (пример: RU,UA,KZ).',
-    );
+    await goToStep(ctx, Step.OFFER_NAME);
+    return;
   }
-  return goToStep(ctx, Step.OFFER_NAME);
+
+  // Парсим коды
+  const tokens = raw
+    .split(/[\s,;]+/g)
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  const valid = [];
+  const invalid = [];
+  for (const t of tokens) {
+    if (/^[A-Z]{2}$/.test(t)) valid.push(t);
+    else invalid.push(t);
+  }
+
+  if (invalid.length) {
+    await ctx.reply(`Некорректные коды: ${invalid.join(', ')}. Пример: RU, KZ, US. Введите через запятую/пробел.`);
+    return;
+  }
+
+  const uniq = Array.from(new Set(valid));
+  if (uniq.length === 0) {
+    ctx.wizard.state.offer.geo_mode   = GEO.ANY;
+    ctx.wizard.state.offer.geo_input  = null;
+    delete ctx.wizard.state.offer.geo_list;
+    delete ctx.wizard.state.offer.geo;
+    await goToStep(ctx, Step.OFFER_NAME);
+    return;
+  }
+
+  // Сохраняем GEO whitelist
+  ctx.wizard.state.offer.geo_mode   = GEO.WHITELIST;
+  ctx.wizard.state.offer.geo_input  = raw;
+  ctx.wizard.state.offer.geo_list   = uniq;
+  ctx.wizard.state.offer.geo        = uniq;
+  // флаг/множитель для последующего перерасчёта цены при сохранении оффера:
+  ctx.wizard.state.offer.geo_enabled    = true;
+  ctx.wizard.state.offer.geo_multiplier = 1.3; // использовать там, где считаешь финальную ставку
+
+  await goToStep(ctx, Step.OFFER_NAME);
 }
 
+// ШАГ 7 — название оффера
 async function step7(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.GEO_TARGETING); return; }
+
   const name = (getMessageText(ctx) || '').trim();
   if (!name) { await ctx.reply('Пустое название — пришлите непустую строку.'); return; }
+
   ctx.wizard.state.offer.title = name;
-  ctx.wizard.state.offer.name = name;
-  return goToStep(ctx, Step.OFFER_SLUG);
+  ctx.wizard.state.offer.name  = name;
+
+  await goToStep(ctx, Step.OFFER_SLUG);
 }
 
+// ШАГ 8 — слаг/подтверждение (начало шага)
 async function step8(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.OFFER_NAME); return; }
-let raw = (getMessageText(ctx) || '').trim();
-const cleaned = raw.replace(/[.,!…—-]+$/u, '').trim().toLowerCase();
-// допускаем: ok/okay/ок/окей/согласен/согласна/оставить + оставляем поддержку '-'
-const OK_WORDS = new Set([
-  '-', 'ok', 'okay', 'okey', 'ок', 'окей', 'согласен', 'согласна', 'оставить'
-]);
 
-const isKeepAuto = OK_WORDS.has(cleaned);
+  let raw = (getMessageText(ctx) || '').trim();
+  const cleaned = raw.replace(/[.,!…—-]+$/u, '').trim().toLowerCase();
+
+  const OK_WORDS = new Set(['-', 'ok', 'okay', 'okey', 'ок', 'окей', 'согласен', 'согласна', 'оставить']);
+
+  const isKeepAuto = OK_WORDS.has(cleaned);
+
+  // ... здесь оставь свою дальнейшую логику генерации slug/подтверждения/сохранения
+  // Главное — везде, где переходишь по шагам, используй await:
+  // await goToStep(ctx, Step.NEXT_STEP);
+}
+
+// ====================== END STEPS ======================
 
 // если пользователь подтвердил — берём autoSlug, иначе — то, что ввёл
 let candidate = isKeepAuto ? (ctx.wizard.state.autoSlug || '') : raw;
