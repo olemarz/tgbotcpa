@@ -227,19 +227,18 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     start_parameter: String(offer.id),
   });
 
-  await replyHtml(
+/*  await replyHtml(
     ctx,
     [
-      '✅ Оффер создан. Счёт выставлен через Telegram Stars.',
+//       '✅ Оффер создан. Счёт выставлен через Telegram Stars.',
       `ID: <code>${offer.id}</code>`,
       'После оплаты оффер станет <b>active</b>.',
     ].join('\n'),
     { disable_web_page_preview: true },
-  );
+  ); */
 
   return offer;
 }
-
 
 
 bot.use(async (ctx, next) => {

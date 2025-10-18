@@ -107,16 +107,17 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
 
   const amountInStars = offer.budget_xtr || centsToXtr(offer.budget_cents);
 
-  await ctx.replyWithInvoice({
-    title: `Оплата оффера: ${offer.title || offer.id}`,
-    description: `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`,
-    payload: String(offer.id),
-    provider_token: '',            // для Stars пусто
-    currency: 'XTR',
-    prices: [{ label: 'Budget', amount: amountInStars }],
-    start_parameter: String(offer.id),
-  });
+await ctx.replyWithInvoice({
+  title: `Оплата оффера: ${offer.title || offer.id}`,
+  description: `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`,
+  payload: String(offer.id),
+  provider_token: '',          // Stars → пусто
+  currency: 'XTR',
+  prices: [{ label: 'Budget', amount: amountInStars }],
+  start_parameter: String(offer.id),
+});
+return offer;           // <- вернуть созданный оффер
+}                       // <- закрыть функцию finalizeOfferAndInvoiceStars
 
-  await ctx.reply('✅ Счёт выставлен через Telegram Stars. После оплаты оффер активируется.', { parse_mode: 'HTML' });
-  return offer;
-}
+// (ниже — экспорт, если он у тебя внизу файла)
+// export { finalizeOfferAndInvoiceStars };

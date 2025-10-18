@@ -4,7 +4,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Scenes, Markup } from 'telegraf';
 import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
-import { finalizeOfferAndInvoiceStars } from './offerFinalize.js';
 import { config, MIN_CAP as DEFAULT_MIN_CAP } from '../config.js';
 import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
@@ -302,10 +301,10 @@ async function finishAndSend(ctx, offerId) {
     trackingUrl = baseUrl ? `${baseUrl}/click/${offerId}` : `/click/${offerId}`;
   }
   await logTrackingLink(offerId, ctx.wizard.state.offer?.title, trackingUrl);
-  await ctx.reply(
-    ['✅ Оффер создан!', `ID: <code>${offerId}</code>`, `Ссылка для трафика: ${trackingUrl}`].join('\n'),
-    { parse_mode: 'HTML', disable_web_page_preview: true }
-  );
+//  await ctx.reply(
+//   //  ['✅ Оффер создан!', `ID: <code>${offerId}</code>`, `Ссылка для трафика: ${trackingUrl}`].join('\n'),
+  //  { parse_mode: 'HTML', disable_web_page_preview: true }
+ // );
   if (config.ADMIN_IDS?.length) {
     for (const chatId of config.ADMIN_IDS) {
       await notifyChat(ctx.telegram, chatId, `Новый оффер #${offerId} создан. ${trackingUrl}`);
