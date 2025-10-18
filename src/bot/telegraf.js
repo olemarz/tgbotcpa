@@ -70,8 +70,6 @@ async function replyHtml(ctx, html, extra = {}) {
   return ctx.reply(html, { parse_mode: 'HTML', ...extra });
 }
 
- return ctx.reply(html, { parse_mode: 'HTML', ...extra });
-}
 
 // --- helper: admin context
 function isAdminCtx(ctx) {
