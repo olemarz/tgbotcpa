@@ -3,8 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Scenes, Markup } from 'telegraf';
 import { EVENT_ORDER, EVENT_TYPES } from './constants.js';
+import { finalizeOfferAndInvoiceStars } from './offerFinalize.js';
 import { config, MIN_CAP as DEFAULT_MIN_CAP } from '../config.js';
-import { query, insertOfferAuditLog } from '../db/index.js';
+import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
@@ -474,84 +475,64 @@ async function step8(ctx) {
   const unique = await ensureUniqueSlug(candidate);
   ctx.wizard.state.offer.slug = unique;
 
-  const finalize = ctx.scene?.state?.finalizeOffer;
-  if (typeof finalize === 'function') {
-    const offerState = ctx.wizard.state.offer || {};
-    const baseRateRaw = Number.isFinite(Number(offerState.base_rate)) ? Number(offerState.base_rate) : null;
-    const premiumRateRaw = Number.isFinite(Number(offerState.premium_rate))
-      ? Number(offerState.premium_rate)
-      : null;
+  const offerState = ctx.wizard.state.offer || {};
+  const baseRateRaw = Number.isFinite(Number(offerState.base_rate)) ? Number(offerState.base_rate) : null;
+  const premiumRateRaw = Number.isFinite(Number(offerState.premium_rate))
+    ? Number(offerState.premium_rate)
+    : null;
 
-    let payoutCents = Number.isFinite(Number(offerState.payout_cents)) ? Number(offerState.payout_cents) : null;
-    if (!payoutCents && baseRateRaw != null) {
-      payoutCents = Math.round(baseRateRaw * 100);
-    }
-    if (!payoutCents && premiumRateRaw != null) {
-      payoutCents = Math.round(premiumRateRaw * 100);
-    }
-
-    const capsTotalRaw = Number.isFinite(Number(offerState.caps_total)) ? Number(offerState.caps_total) : null;
-    let budgetCents = Number.isFinite(Number(offerState.budget_cents))
-      ? Number(offerState.budget_cents)
-      : null;
-    if ((budgetCents == null || budgetCents <= 0) && payoutCents && capsTotalRaw && capsTotalRaw > 0) {
-      budgetCents = payoutCents * capsTotalRaw;
-    }
-    if (!budgetCents && payoutCents) {
-      budgetCents = payoutCents;
-    }
-
-    const geoValue = (() => {
-      if (offerState.geo) return offerState.geo;
-      if (offerState.geo_list) return offerState.geo_list;
-      if (offerState.geo_input) return offerState.geo_input;
-      return null;
-    })();
-
-    const form = {
-      title: offerState.title ?? offerState.name ?? null,
-      target_url: offerState.target_url,
-      event_type: offerState.event_type,
-      payout_cents: payoutCents ?? 0,
-      budget_cents: budgetCents ?? (payoutCents ?? 0),
-      geo: geoValue,
-      slug: unique,
-      base_rate_rub: baseRateRaw,
-      base_rate_cents: baseRateRaw != null ? Math.round(baseRateRaw * 100) : null,
-      premium_rate_rub: premiumRateRaw,
-      premium_rate_cents: premiumRateRaw != null ? Math.round(premiumRateRaw * 100) : null,
-      caps_total: capsTotalRaw,
-      status: 'draft',
-    };
-
-    if (ctx.session) {
-      ctx.session.form = form;
-    }
-
-    try {
-      const created = await finalize(ctx, form);
-      if (created?.id) {
-        await insertOfferAuditLog?.(created.id, 'created_by_wizard', { tg_id: ctx.from?.id }).catch(() => {});
-      }
-    } catch (error) {
-      console.error(`${logPrefix} finalize offer failed`, error?.message || error);
-      await ctx.reply('❌ Не удалось создать оффер. Попробуйте позже.');
-    }
-    return ctx.scene.leave();
+  let payoutCents = Number.isFinite(Number(offerState.payout_cents)) ? Number(offerState.payout_cents) : null;
+  if (!payoutCents && baseRateRaw != null) {
+    payoutCents = Math.round(baseRateRaw * 100);
+  }
+  if (!payoutCents && premiumRateRaw != null) {
+    payoutCents = Math.round(premiumRateRaw * 100);
   }
 
-  const offer = { ...ctx.wizard.state.offer, created_by_tg: ctx.from?.id ?? null };
-  let offerId;
+  const capsTotalRaw = Number.isFinite(Number(offerState.caps_total)) ? Number(offerState.caps_total) : null;
+  let budgetCents = Number.isFinite(Number(offerState.budget_cents))
+    ? Number(offerState.budget_cents)
+    : null;
+  if ((budgetCents == null || budgetCents <= 0) && payoutCents && capsTotalRaw && capsTotalRaw > 0) {
+    budgetCents = payoutCents * capsTotalRaw;
+  }
+  if (!budgetCents && payoutCents) {
+    budgetCents = payoutCents;
+  }
+
+  const geoValue = (() => {
+    if (offerState.geo) return offerState.geo;
+    if (offerState.geo_list) return offerState.geo_list;
+    if (offerState.geo_input) return offerState.geo_input;
+    return null;
+  })();
+
+  const form = {
+    title: offerState.title ?? offerState.name ?? null,
+    target_url: offerState.target_url,
+    event_type: offerState.event_type,
+    payout_cents: payoutCents ?? 0,
+    budget_cents: budgetCents ?? (payoutCents ?? 0),
+    geo: geoValue,
+    slug: unique,
+    base_rate_rub: baseRateRaw,
+    base_rate_cents: baseRateRaw != null ? Math.round(baseRateRaw * 100) : null,
+    premium_rate_rub: premiumRateRaw,
+    premium_rate_cents: premiumRateRaw != null ? Math.round(premiumRateRaw * 100) : null,
+    caps_total: capsTotalRaw,
+    status: 'draft',
+  };
+
+  if (ctx.session) {
+    ctx.session.form = form;
+  }
+
+  // Выставляем счёт Stars и завершаем мастер
+  await finalizeOfferAndInvoiceStars(ctx, form);
   try {
-    offerId = await createOfferReturningId(offer);
-    await insertOfferAuditLog?.(offerId, 'created_by_wizard', { tg_id: ctx.from?.id }).catch(() => {});
-  } catch (e) {
-    console.error(`${logPrefix} create offer failed`, e);
-    await ctx.reply('❌ Не удалось создать оффер. Попробуйте позже.');
-    return cancelWizard(ctx);
-  }
-  await finishAndSend(ctx, offerId);
-  return ctx.scene.leave();
+    await ctx.scene.leave();
+  } catch {}
+  return;
 }
 
 export const adsWizardScene = new Scenes.WizardScene(
