@@ -105,14 +105,22 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     budget_xtr: columns.has('budget_xtr') ? (row.budget_xtr ?? normalizedBudgetXtr) : normalizedBudgetXtr,
   };
 
-  const amountInStars = offer.budget_xtr || centsToXtr(offer.budget_cents);
-
+const amountInStars = Math.max(
+  1,
+  Math.ceil(offer.budget_xtr || centsToXtr(offer.budget_cents))
+);
+const payoutInStars = Math.max(1, Math.ceil(centsToXtr(payoutAdjusted)));
 await ctx.replyWithInvoice({
   title: `Оплата оффера: ${offer.title || offer.id}`,
-  description: `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`,
+  // ❤️ сделаем текст "в звёздах", без рублей
+  description: `Бюджет: ${amountInStars} ⭐️. Payout: ${payoutInStars} ⭐️.`,
   payload: String(offer.id),
-  provider_token: '',          // Stars → пусто
+
+  // для Stars токен оставляем пустым
+  provider_token: '',
   currency: 'XTR',
+
+  // в prices.amount — ЦЕЛОЕ число звёзд
   prices: [{ label: 'Budget', amount: amountInStars }],
   start_parameter: String(offer.id),
 });
