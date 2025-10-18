@@ -71,6 +71,23 @@ async function replyHtml(ctx, html, extra = {}) {
 }
 
 
+function sanitizeTelegramHtml(input) {
+  // 1) заменяем <br> на \n
+  let s = String(input).replace(/<br\s*\/?>/gi, '\n');
+
+  // 2) выкидываем неподдерживаемые теги (оставляем только whitelisted теги Tg)
+  // Разрешены: b,strong,i,em,u,ins,s,strike,del,a,code,pre,span (частично),tg-emoji
+  // Ниже — мягкая зачистка всего, что выглядит как <tag ...> кроме разрешённых.
+  s = s.replace(/<(?!\/?(?:b|strong|i|em|u|ins|s|strike|del|a|code|pre)\b)[^>]*>/gi, '');
+
+  return s;
+}
+
+async function replyHtml(ctx, html, extra = {}) {
+  const safe = Array.isArray(html) ? html.map(sanitizeTelegramHtml).join('\n') : sanitizeTelegramHtml(html);
+  return ctx.reply(safe, { parse_mode: 'HTML', ...extra });
+}
+
 // --- helper: admin context
 function isAdminCtx(ctx) {
   const adminId = Number(process.env.ADMIN_TG_ID || 0);
@@ -295,7 +312,7 @@ bot.start(async (ctx) => {
 
   await replyHtml(
     ctx,
-    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:<br><code>/claim &lt;TOKEN&gt;</code>',
+    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:\n<code>/claim &lt;TOKEN&gt;</code>',
   );
 });
 

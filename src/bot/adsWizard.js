@@ -496,6 +496,10 @@ let candidate = isKeepAuto ? (ctx.wizard.state.autoSlug || '') : raw;
   const unique = await ensureUniqueSlug(candidate);
   ctx.wizard.state.offer.slug = unique;
 
+await finalizeOfferAndInvoiceStars(ctx, ctx.wizard.state.offer || {});
+try { await ctx.scene.leave(); } catch {}
+return;
+
   const offerState = ctx.wizard.state.offer || {};
   const baseRateRaw = Number.isFinite(Number(offerState.base_rate)) ? Number(offerState.base_rate) : null;
   const premiumRateRaw = Number.isFinite(Number(offerState.premium_rate))

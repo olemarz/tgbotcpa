@@ -23,7 +23,9 @@ module.exports = {
 
       // Бизнес-настройки
       HIGH_GEO_LIST: 'US,CA,DE,GB',     // +30% к payout по этим GEO
-      ADMIN_TG_ID: '0',                 // опционально: твой tg id (числом/строкой)
+      
+GEO_MARKUP_PERCENT_JSON: '{"US":30,"GB":30,"CA":30}',
+	ADMIN_TG_ID: '7717898010',                 // опционально: твой tg id (числом/строкой)
       ADMIN_TOKEN: 'super-admin-token'  // опционально: для /api/offers
     }
   }]
