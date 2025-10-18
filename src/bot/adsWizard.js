@@ -241,10 +241,15 @@ async function promptCapsTotal(ctx) {
 }
 async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: RU,UA,KZ (ISO2-коды, через запятую/пробел).\n` +
-    `Пусто или 0 — без гео-ограничений. Команды: [Назад], [Отмена].`
-  );
+await replyHtml(
+  ctx,
+  [
+    'Шаг 6/8. Введите GEO. Пример: RU,UA,KZ (ISO2-коды, через запятую/пробел).',
+    '⚠️ Внимание: при включении гео-таргетинга стоимость целевого действия увеличивается на <b>30%</b> и округляется вверх.',
+    'Пусто или 0 — без гео-ограничений.',
+    'Команды: [Назад], [Отмена].',
+  ].join('\n'),
+);
 }
 async function promptOfferName(ctx) {
   const stepNum = STEP_NUMBERS[Step.OFFER_NAME];
@@ -257,7 +262,7 @@ async function promptOfferSlug(ctx) {
   ctx.wizard.state.autoSlug = auto;
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.\n` +
-    `Если хотите оставить — отправьте «-». Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.\n` +
+    `Если хотите оставить — отправьте «ок» «ok» (или «согласен»). Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.\n` +
     'Команды: [Назад], [Отмена].',
     { parse_mode: 'HTML' }
   );
@@ -468,9 +473,25 @@ async function step8(ctx) {
   if (shouldSkipCurrentUpdate(ctx)) return;
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.OFFER_NAME); return; }
-  let candidate = (getMessageText(ctx) || '').trim();
-  if (candidate === '-' || candidate === '—') candidate = ctx.wizard.state.autoSlug;
-  candidate = slugify(candidate);
+let raw = (getMessageText(ctx) || '').trim();
+const cleaned = raw.replace(/[.,!…—-]+$/u, '').trim().toLowerCase();
+// допускаем: ok/okay/ок/окей/согласен/согласна/оставить + оставляем поддержку '-'
+const OK_WORDS = new Set([
+  '-', 'ok', 'okay', 'okey', 'ок', 'окей', 'согласен', 'согласна', 'оставить'
+]);
+
+const isKeepAuto = OK_WORDS.has(cleaned);
+
+// если пользователь подтвердил — берём autoSlug, иначе — то, что ввёл
+let candidate = isKeepAuto ? (ctx.wizard.state.autoSlug || '') : raw;
+
+
+ if (candidate === '-' || candidate === '') {
+    candidate = ctx.wizard.state.autoSlug || '';
+  } else {
+    candidate = slugify(candidate).slice(0, 60);
+  }
+
   if (!candidate) { await ctx.reply('Slug пуст или некорректен. Пришлите другой.'); return; }
   const unique = await ensureUniqueSlug(candidate);
   ctx.wizard.state.offer.slug = unique;
