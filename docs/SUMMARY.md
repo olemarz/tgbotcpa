@@ -1,13 +1,16 @@
-# SUMMARY
+# Summary
 
-## Как пользоваться документацией
-- Начните с [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md), чтобы понять архитектуру и потоки данных.
-- Затем переходите к [RUN_LOCAL.md](./RUN_LOCAL.md) для локального запуска и отладки.
-- Используйте [API_AND_COMMANDS.md](./API_AND_COMMANDS.md) и [CONFIG_ENV.md](./CONFIG_ENV.md) как справочник по сценариям бота и переменным окружения.
-- Операционные вопросы по продакшену описаны в [DEPLOY_OPERATIONS.md](./DEPLOY_OPERATIONS.md) и [TESTING_AND_QA.md](./TESTING_AND_QA.md).
-- Историю изменений и план работ смотрите в [CHANGELOG.md](./CHANGELOG.md) и [ROADMAP.md](./ROADMAP.md).
+## How to navigate the documentation
 
-## Оглавление
+1. Start with [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md) for an architectural tour.
+2. Use [RUN_LOCAL.md](./RUN_LOCAL.md) to bootstrap a local environment.
+3. Consult [API_AND_COMMANDS.md](./API_AND_COMMANDS.md) for bot flows and HTTP endpoints.
+4. Reference [CONFIG_ENV.md](./CONFIG_ENV.md) and [../DOCS/ENV.md](../DOCS/ENV.md) when updating secrets.
+5. Operational guidance lives in [DEPLOY_OPERATIONS.md](./DEPLOY_OPERATIONS.md), [DOCS/RUNBOOK.md](../DOCS/RUNBOOK.md) and [TESTING_AND_QA.md](./TESTING_AND_QA.md).
+6. Keep an eye on [CHANGELOG.md](./CHANGELOG.md) and [ROADMAP.md](./ROADMAP.md) for ongoing work.
+
+## Contents
+
 1. [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md)
 2. [API_AND_COMMANDS.md](./API_AND_COMMANDS.md)
 3. [CONFIG_ENV.md](./CONFIG_ENV.md)
@@ -20,20 +23,23 @@
 10. [CHANGELOG.md](./CHANGELOG.md)
 11. [chat_assistant_context.json](./chat_assistant_context.json)
 
-## Карта репозитория
+## Repository quick map
+
 ```
-.
-├── README.md               — постановка и быстрый старт
-├── ecosystem.config.cjs    — конфиг PM2 для API-процесса `tg-api`
-├── package.json            — npm-скрипты и зависимости
-├── src/
-│   ├── api/                — HTTP API и Telegram webhook (Express)
-│   ├── bot/                — логика Telegram-бота на Telegraf (сцены, команды)
-│   ├── constants/          — доменные константы
-│   ├── db/                 — подключение к PostgreSQL и миграции
-│   └── util/               — утилиты (HMAC, генерация ID/slug)
-├── tests/                  — smoke-тесты API (Jest + Supertest)
-└── docs/                   — эта документация
+README.md                – project overview and quick start
+ecosystem.config.cjs     – PM2 process configuration
+package.json             – scripts and dependencies
+src/
+  api/                   – Express app, webhook server and partner APIs
+  bot/                   – Telegraf scenes, commands and middleware
+  constants/             – domain enums and limits
+  db/                    – PostgreSQL pool, migrations and seeds
+  integrations/          – external partner helpers
+  services/              – business logic (postbacks, conversions)
+  util/ & utils/         – shared helpers (IDs, geo, Telegram)
+tests/                   – Node test runner suites
+DOCS/ & docs/            – operational + product documentation bundles
+scripts/                 – CLI utilities (doctor, webhook registration)
 ```
 
-> Совет: в каждом файле документа указаны ссылки на исходный код с конкретными путями, чтобы быстрее перейти к реализации.
+> Tip: Each document links to concrete source files so you can jump directly to implementations.

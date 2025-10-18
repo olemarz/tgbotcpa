@@ -1,6 +1,14 @@
-# CHANGELOG
+# Changelog
 
 ## [Unreleased]
 ### Added
-- Комплект документации `/docs/*`: архитектура, запуск, деплой, конфигурация, roadmap, контекст для ассистентов.
-- Обновлён глоссарий и changelog, добавлены TODO по критичным задачам.
+- Comprehensive documentation refresh covering README, operational runbooks and API catalog.
+- Environment variable reference with defaults and integration notes.
+- Scripted workflow (`scripts/package-docs.sh`) to build an offline documentation archive on demand.
+
+### Changed
+- Updated architecture diagrams to match current module layout.
+- Clarified deployment, testing and webhook setup procedures.
+
+### Removed
+- Stale references to deprecated routes and tooling.

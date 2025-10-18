@@ -1,65 +1,75 @@
-# RUN LOCAL
+# Run locally
 
-## Требования
-- Node.js 20.x (совместимо с GitHub Actions и README).
-- npm 10+ (поставляется с Node 20).
-- PostgreSQL 14+ (любой совместимый инстанс, локально или через Docker).
+## Requirements
 
-## Подготовка окружения
+- Node.js 20.x with npm 10+
+- PostgreSQL 13+ (Docker or local instance)
+- Telegram bot token (`BOT_TOKEN`)
+
+## Environment setup
+
 ```bash
-cp .env.example .env
-# отредактируйте BOT_TOKEN, BASE_URL, DATABASE_URL, CPA_POSTBACK_URL, CPA_PB_SECRET
+cp ecosystem.env .env
+# edit .env and provide BOT_TOKEN, BASE_URL, DATABASE_URL, CPA_POSTBACK_URL, CPA_PB_SECRET
 ```
 
-Пример запуска PostgreSQL через Docker:
+Optional: run PostgreSQL via Docker
+
 ```bash
 docker run --name tgbotcpa-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:15
 export DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
 ```
 
-## Установка зависимостей
+## Install dependencies
+
 ```bash
-npm ci
+npm install
 ```
 
-## Миграции БД
+## Database migrations
+
 ```bash
 npm run migrate
-# скрипт вызывает src/db/migrate.js и создаёт таблицы offers, clicks, start_tokens, attribution, events, postbacks, offer_audit_log
 ```
 
-## Запуск API и бота
-⚠️ **Важно:** текущая версия `src/api/server.js` не использует `createApp()` и не импортирует `express`, поэтому падает при запуске. До исправления P0 (см. ROADMAP) используйте прямой запуск `createApp()` из REPL:
+The script applies all SQL files under `src/db/migrations/` and seeds demo data if `SEED=1`.
+
+## Start services
+
+### Webhook HTTP server
+
 ```bash
-node -e "import('./src/api/app.js').then(({createApp})=>{const app=createApp();app.listen(3000,()=>console.log('API on 3000 (manual)'));})"
+npm run api
+# listens on ${BIND_HOST:-127.0.0.1}:${PORT:-8000}
 ```
 
-Для локального long polling бота (без вебхука):
+The process automatically wires `bot.handleUpdate` to the webhook route (`WEBHOOK_PATH`, default `/bot/webhook`).
+
+### Long polling bot
+
 ```bash
-NODE_ENV=dev npm run bot
-# вывод: Bot launched (long polling)
+npm run bot
 ```
 
-### QA-ярлыки для проверки старта
-- `/claim <TOKEN>` — вручную отрабатывает старт-токен, если Telegram не передал payload в `/start`.
-- `/go <offer_id> [uid]` — создаёт синтетический `click`, генерирует base64url-токен (≤64 символов) и сразу вызывает старт-обработчик.
+Useful for local testing without exposing a tunnel. Stop with `Ctrl+C`.
 
-Оба сценария логируются через `logUpdate()` с указанием `startPayload` и типа апдейта.
+## Smoke checks
 
-## Smoke-тесты
-После запуска API:
 ```bash
-curl -s http://localhost:3000/health
-# {"ok":true}
+curl -fsS http://127.0.0.1:${PORT:-8000}/health
+curl -I "http://127.0.0.1:${PORT:-8000}/click/<offer_uuid>?uid=local-test"
 ```
 
-Проверка redirect:
-```bash
-curl -I "http://localhost:3000/click/<offer_uuid>?click_id=test"
-# HTTP/1.1 302 Found
-# location: https://t.me/<bot>?start=<token>
-```
+You should see `HTTP/1.1 302 Found` with a Telegram deep link. Use `/claim <TOKEN>` in Telegram to replay onboarding if payload is lost.
 
-## Завершение работы
-- Остановите локальный сервер (`Ctrl+C`) или контейнер Postgres (`docker stop tgbotcpa-db`).
-- Очистите временные данные, если использовали debug endpoints (`DELETE FROM offers ...`).
+## Debug helpers
+
+- `scripts/test-webhook.sh` — sends a synthetic `/start` payload to the local webhook.
+- `scripts/health.sh` — curl probe hitting `/health`.
+- `/debug/complete` — emulate conversion (requires `DEBUG_TOKEN`).
+
+## Cleanup
+
+- Stop services (`Ctrl+C`).
+- `docker stop tgbotcpa-db` and `docker rm tgbotcpa-db` when finished.
+- Clear temporary data via SQL if you inserted test offers (`DELETE FROM offers WHERE ...`).

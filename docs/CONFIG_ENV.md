@@ -1,24 +1,17 @@
-# CONFIG & ENV
+# Configuration & Environment
 
-| Переменная | Тип | Обязательна | Значение по умолчанию | Где используется | Риски/примечания |
-|------------|-----|-------------|-----------------------|------------------|------------------|
-| `BOT_TOKEN` | `string` (Telegram bot token) | Да | — | Загружается в `src/config.js`, передаётся в `Telegraf(config.botToken)` (`src/bot/telegraf.js`). | Без токена бот и API не стартуют (`config` бросает исключение). |
-| `BASE_URL` | `url` | Да | — | `config.baseUrl`, `config.baseUrlHost` для генерации ссылок `https://<host>/click/...` в мастере (`adsWizard`). | Некорректный URL ломает редирект и валидацию; используется при генерации итоговых ссылок рекламодателям. |
-| `PORT` | `number` | Нет (но рекомендуется) | `3000` | Порт HTTP сервера (`config.port`, слушается в `src/api/server.js`). | Невалидное значение → ошибка при запуске (валидируется `Number.parseInt`). |
-| `DATABASE_URL` | `postgres connection string` | Да | Передаётся в `pg.Pool` (`src/db/index.js`). | Без подключения операции `query()` падают; требуется доступ Postgres. |
-| `CPA_POSTBACK_URL` | `url` | Да (можно через alias `CPA_PB_URL`) | — | URL для отправки постбеков (`sendCpaPostback`, `/postbacks/relay`). | Неверный URL → ошибки сети; прод-логика постбеков не работает. |
-| `CPA_PB_URL` | `url` | Alias | — | Альтернативное имя для `CPA_POSTBACK_URL` (см. `buildConfig`). | Используется, если исторически переменная называлась иначе. |
-| `CPA_PB_SECRET` | `string` | Нет, но рекомендуется | Если пусто — `config` выводит warning и подставляет `'dev-secret'`. | Секрет для подписи HMAC (`sendCpaPostback`, `hmacSHA256Hex`). | В проде обязательна для безопасности; fallback `'dev-secret'` оставляет подписи предсказуемыми. |
-| `ALLOWED_UPDATES` | `string` (CSV) | Нет | `''` → `[]` | Используется в `config.allowedUpdates` (можно пробросить в Telegraf при webhook setup). | При пустом массиве Telegram шлёт все типы апдейтов. |
-| `TZ` | `string` (IANA timezone) | Нет | `Europe/Rome` | Используется в `config.tz`; влияет на cron/даты, если будут добавлены. | Уточняйте при развёртывании в других регионах. |
-| `DEBUG_TOKEN` | `string` | Нет, но обязателен для debug-endpoints | — | Сравнивается в middleware `requireDebug` (`src/api/app.js`). | Без него доступ к `/debug/*` закрыт (401); установите уникальное значение. |
-| `WEBHOOK_PATH` | `string` (путь) | Нет | `''` → по умолчанию `/bot/webhook` | Используется в `config.webhookPath` и Telegraf webhook (`bot.webhookCallback`). | Если изменить, нужно обновить webhook в Telegram. |
-| `NODE_ENV` | `string` | Нет | `undefined` | Логика автозапуска polling (`src/bot/telegraf.js`) активируется, если `NODE_ENV === 'dev'` и webhook не задан. | Убедитесь, что в проде значение не `dev`, иначе бот попытается включить polling. |
+This project relies on `.env` (or deployment secrets) loaded through `dotenv`. The canonical reference lives in [DOCS/ENV.md](../DOCS/ENV.md). Key highlights:
 
-## Источники значений
-- `.env.example` содержит базовый шаблон.
-- `src/config.js` валидирует и нормализует переменные.
-- `tests/setup-env.js` и `src/config.test.js` задают тестовые значения.
+- **Core requirements**: `BOT_TOKEN`, `BASE_URL`, `DATABASE_URL` must be present or the app will terminate during boot (`buildConfig`).
+- **Security tokens**:
+  - `ADMIN_TOKEN` protects admin HTTP endpoints.
+  - `ADMIN_TG_ID` unlocks admin bot commands.
+  - `WEBHOOK_SECRET` enables Telegram secret-token validation.
+  - `CPA_API_KEY` locks down `/api/cpa/*` partner routes.
+  - `DEBUG_TOKEN` guards debug tooling (`/debug/*`, `/api/wa/*`).
+- **CPA integration**: Set `CPA_POSTBACK_URL` and `CPA_PB_SECRET` to forward conversions. Optionally tweak `POSTBACK_TIMEOUT_MS` and `IDEMPOTENCY_TTL_SEC` to match partner SLAs.
+- **Wizard access**: Provide comma-separated Telegram IDs through `ADS_MASTERS` (or legacy aliases `ADS_WIZARD_ADMINS`, `ADS_WIZARD_WHITELIST`).
+- **Pricing controls**: `HIGH_GEO_LIST` (e.g. `US,CA,GB`) increases payouts by 30% for specified GEO codes.
+- **Operational tweaks**: `WEBHOOK_PATH`, `BIND_HOST`, `PORT`, `TZ`, `NODE_ENV`, `DISABLE_LINK_CAPTURE`.
 
-## Настройка webhook
-Команда установки webhook (из README) использует `BOT_TOKEN`, `BASE_URL` и необязательный список `ALLOWED_UPDATES`. Убедитесь, что `WEBHOOK_PATH` совпадает с тем, что передаётся в запрос `setWebhook`.
+For local development duplicate `ecosystem.env` and adjust secrets. Production deployments should rely on secure secret storage (Ansible vault, environment manager, etc.) rather than committed files.
