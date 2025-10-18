@@ -1,48 +1,49 @@
-# API И КОМАНДЫ
+# API & Commands
 
-## Telegram-команды
-| Команда | Описание | Где реализовано | Ответ/действие |
-|---------|----------|-----------------|----------------|
-| `/start` | Старт-обработчик CPA-ссылок. | `src/bot/telegraf.js` (`bot.start`) | При наличии payload вызывает `handleStartWithToken()`. Без payload объясняет, как использовать `/claim <TOKEN>`. |
-| `/whoami` | Отправляет пользователю его Telegram ID. | `src/bot/telegraf.js` (`bot.command('whoami')`) | Текст `Your Telegram ID: <id>`. Ошибки логируются. |
-| `/ads` | Запускает сцену мастера создания оффера. | `src/bot/telegraf.js` (`ctx.scene.enter('ads-wizard')`) | Пользователь переводится в сцену `adsWizard`, дальше шаги ниже. |
-| `/claim <TOKEN>` | QA-фолбэк, вручную запускает `handleStartWithToken()` по токену. | `src/bot/telegraf.js` (`bot.hears(/^\/claim ...)`) | Валидация токена, связывает `clicks` ↔ `tg_id`, отвечает кнопкой вступления/«Готово». |
-| `/go <offer_id> [uid]` | QA-ярлык: создаёт синтетический `click` и сразу обрабатывает старт. | `src/bot/telegraf.js` (`bot.hears(/^\/go ...)`) | Проверяет оффер, генерирует base64url-токен ≤64 символов, вызывает `handleStartWithToken()`. |
-| Любой текст вне сцены | Эхо-ответ с `echo: <текст>`. | `src/bot/telegraf.js` (`bot.on('text')`) | Отправляет echo, если пользователь не в сцене и сообщение не команда. |
+## Telegram commands
 
-## Сцена `adsWizard`
-Файл: `src/bot/adsWizard.js`. Сцена содержит последовательность шагов (`Step.*`), валидирует ввод и сохраняет оффер. Основные шаги:
-1. **Ввод ссылки** (`Step.TARGET_URL`): проверка формата `https://t.me/...`, hostname ∈ {t.me, telegram.me, telegram.dog}. Инвайт-ссылки (`t.me/+...`) не принимаются.
-2. **Выбор типа события** (`Step.EVENT_TYPE`): inline-клавиатура (`buildEventKeyboard`) с типами из `EVENT_TYPES`. После выбора сохраняется `event_type`.
-3. **Базовая ставка** (`Step.BASE_RATE`): число с точностью до копеек. Минимум берётся из `config.MIN_RATES[event_type].base`.
-4. **Премиум-ставка** (`Step.PREMIUM_RATE`): не может быть ниже базовой либо минимального порога для премиума (`config.MIN_RATES[event_type].premium`).
-5. **Общий кап** (`Step.CAPS_TOTAL`): целое число ≥ 0. Ноль означает отсутствие ограничения.
-6. **Геотаргетинг** (`Step.GEO_TARGETING`): пустая строка/«0» — без ограничений. Любой другой ввод парсится через `parseGeoInput` и сохраняется в виде whitelist.
-7. **Название** (`Step.OFFER_NAME`): произвольная непустая строка, также сохраняется в `offer.name`.
-8. **Slug** (`Step.OFFER_SLUG`): отображается авто-slug (результат `slugify`). Пользователь может оставить `-` или ввести собственный slug (до 60 символов, латиница/цифры/дефис). После валидации вызывается `ensureUniqueSlug`, создаётся запись `offers`, пишется аудит и отправляется итоговая ссылка `buildTrackingUrl()`.
+| Command | Audience | Description | Implementation |
+| --- | --- | --- | --- |
+| `/start` | All users | Entry point for CPA links and deep links. Dispatches to `handleStartWithToken` when payload is present, otherwise explains how to request access. | `src/bot/telegraf.js` (`bot.start`, `handleStartWithToken`) |
+| `/ads` | Whitelisted advertisers | Launches the offer creation wizard (`adsWizardScene`). | `src/bot/telegraf.js`, `src/bot/adsWizard.js` |
+| `/claim <TOKEN>` | QA / manual recovery | Redeems a previously issued invite token and replays onboarding. | `src/bot/telegraf.js` (`handleClaimCommand`) |
+| `/whoami` | All users | Sends the Telegram ID and username for debugging. | `src/bot/telegraf.js` |
+| `/help` | All users | Short instructions and support contact. | `src/bot/telegraf.js` |
+| `/cancel` | Scene participants | Exits the current wizard state. | `src/bot/telegraf.js`, `adsWizardScene` |
+| `/stat` | Whitelisted analysts | Opens stats dashboard with inline keyboard callbacks. | `src/bot/stat.js` |
+| `/admin_offers`, `/offer_status` | Admin only (`ADMIN_TG_ID`) | Lists recently created offers and inspects status by ID. | `src/bot/telegraf.js` |
 
-Дополнительно:
-- Команды **«Отмена»/`/cancel`** завершают сцену (`cancelWizard`).
-- **«Назад»/`/back`** возвращают к предыдущему шагу.
-- При ошибках валидации бот повторяет шаг с пояснением.
+Additional developer shortcuts: `/go <offer_id> [uid]` synthesises a click and invokes onboarding; `/qa_click <offer_id>` seeds click attribution without hitting the public redirect.
 
-Токены старта валидируются по алфавиту base64url (`A-Z`, `a-z`, `0-9`, `_`, `-`) и длине ≤ 64 символа.
+## Ads wizard flow
 
-## HTTP API
-Файл: `src/api/app.js`.
+The wizard lives in `src/bot/adsWizard.js` and stores state in PostgreSQL via `sessionStore`. Core stages:
 
-| Метод и путь | Назначение | Требования | Ответ |
-|--------------|------------|------------|--------|
-| `GET /health` | Health-check приложения. | Нет. | `{ "ok": true }`. |
-| `POST /bot/webhook` | Приём Telegram update через webhook. | Telegram должен слать JSON. | Всегда 200 (Telegraf webhook). |
-| `GET /click/:offerId` | Регистрация клика из CPA сети, генерация `start`-токена, редирект в бота. | `offerId` должен быть UUID; query должен содержать `sub`/`uid`/`click_id`. | 400 при ошибках; 302 редирект в `https://t.me/<bot>?start=<token>`. |
-| `GET /s/:shareToken` | Упрощённый счётчик «share». | Нет обязательных параметров. | 302 редирект (по умолчанию `https://t.me`). TODO: уникальный подсчёт. |
-| `POST /postbacks/relay` | Получение внешнего постбека (например, от бота рекламодателя) и ретрансляция в CPA сеть. | Тело должно содержать `offer_id`, `user_id`, `event`; требуется существующая атрибуция (`attribution`). | 200 `{ ok: true }` при успехе; 404, если нет атрибуции; 502 при ошибке CPA. |
-| `POST /debug/seed_offer` | Быстрое создание оффера для теста. | Заголовок `x-debug-token` = `process.env.DEBUG_TOKEN`. | `{ ok: true, offer_id }` или 401/500. |
-| `POST /debug/complete` | Триггер ручного постбека в CPA. | Тот же debug-token; тело: `offer_id`, `uid`, опционально `status`. | `{ ok: true }` или ошибки. |
+1. **Target link** — validates Telegram join/chat links and persists `target_url`.
+2. **Event type** — inline keyboard selection (`join_group`, `start_bot`, etc.).
+3. **Payouts** — base and premium rates with minimum thresholds (`config.MIN_RATES`). High GEO codes add +30% (`adjustPayoutCents`).
+4. **Budget** — budget in cents or stars, automatically defaults to payout when omitted.
+5. **GEO targeting** — parsed by `parseGeoInput`; stores both raw input and normalized list.
+6. **Offer metadata** — title, optional slug, campaign notes.
+7. **Confirmation** — inserts row into `offers`, sends audit log and returns deep link + tracking URL.
 
-### CPA Postback
-`sendCpaPostback(payload)` формирует подпись `X-Signature = HMAC_SHA256(body, config.cpaSecret)` при наличии `CPA_PB_SECRET`. Таймаут запроса — 4 секунды (конфигурируется). Ошибки логируются с `offer_id`, `uid`, `event`.
+Users can send `Назад` or `/back` to revisit previous steps. `/cancel` clears the session and exits the scene.
 
-### Авторизация debug-endpoints
-Middleware `requireDebug` в `src/api/app.js` сравнивает `x-debug-token` и `process.env.DEBUG_TOKEN`. При отсутствии заголовка или неверном значении — 401.
+## HTTP & partner APIs
+
+| Method | Path | Description | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/health` | Liveness probe returning `{ ok: true }`. | None |
+| `GET` | `/` | Basic JSON banner with service metadata. | None |
+| `POST` | `/bot/webhook` | Telegram webhook handler. Validates `WEBHOOK_SECRET` when provided. | Telegram secret token (optional) |
+| `GET` | `/click/:offerId` | Registers a click, stores attribution and redirects to `/start <token>`. Accepts `uid`, `sub`, `click_id`. | None |
+| `POST` | `/offers` | Minimal REST endpoint to create offers (used by internal tools). | None |
+| `GET` | `/api/offers` | Returns latest offers for admin dashboards. | `ADMIN_TOKEN` query or header |
+| `POST` | `/api/offers` | Inserts a draft offer with adjusted payout. | `ADMIN_TOKEN` |
+| `POST` | `/api/pay/:id` | Debug route to mark offers as paid. | `ADMIN_TOKEN` |
+| `GET` | `/api/cpa/offers/:id` | Partner API exposing offer metadata (tracking URL, GEO, payout). | `X-Api-Key: ${CPA_API_KEY}` |
+| `POST` | `/debug/complete` | Simulates conversion and posts back to CPA endpoint. | `X-Debug-Token: ${DEBUG_TOKEN}` |
+| `GET` | `/debug/last` | Returns last clicks/events/postbacks for a Telegram ID. | `X-Debug-Token: ${DEBUG_TOKEN}` |
+| `GET` | `/api/wa/*` | WhatsApp landing pages and lead collection. | `X-Debug-Token: ${DEBUG_TOKEN}` |
+
+CPA postbacks are signed with `HMAC_SHA256` using `CPA_PB_SECRET` and delivered with a configurable timeout (`POSTBACK_TIMEOUT_MS`). Deduplication is enforced for `IDEMPOTENCY_TTL_SEC` seconds to avoid double crediting.

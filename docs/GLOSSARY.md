@@ -1,15 +1,15 @@
-# GLOSSARY
+# Glossary
 
-| Термин | Определение | Где используется |
-|--------|-------------|------------------|
-| **Offer / оффер** | Настройка рекламной кампании в боте (URL, целевое действие, ставки, лимиты). | Таблица `offers`, сцена `/ads` (`src/bot/adsWizard.js`). |
-| **Event type** | Целевое действие пользователя: `join_group`, `forward`, `reaction`, `comment`, `paid`, `start_bot`. | Константы `EVENT_TYPES` (`src/bot/constants.js`), валидация сцены. |
-| **Caps** | Лимиты по количеству конверсий. | Поле `caps_total` таблицы `offers`. |
-| **Geo targeting** | Ограничение показов оффера по странам/городам. | Поля `geo_mode`, `geo_list` таблицы `offers`. |
-| **Start token** | Одноразовый токен, выдаваемый при клике и передаваемый в `/start`. | Таблица `start_tokens`, endpoint `/click/:offerId`. |
-| **Attribution** | Связь Telegram-пользователя и клика с `uid/click_id`. | Таблица `attribution`, endpoint `/postbacks/relay`. |
-| **Postback** | HTTP-запрос в CPA сеть о выполнении события. | `sendCpaPostback` (`src/api/app.js`), таблица `postbacks`. |
-| **CPA secret** | HMAC-ключ для подписи postback payload. | Переменная `CPA_PB_SECRET`, `hmacSHA256Hex`. |
-| **Wizard** | Пошаговый сценарий (`Telegraf Scenes`) для сбора параметров оффера. | `src/bot/adsWizard.js`. |
-| **Debug token** | Токен доступа к `/debug/*` эндпоинтам. | `requireDebug` (`src/api/app.js`). |
-| **Share token** | Токен для упрощённого счётчика переходов (`/s/:shareToken`). | Endpoint `GET /s/:shareToken`. |
+| Term | Definition | Where to look |
+| --- | --- | --- |
+| **Offer** | Campaign configuration containing target link, event type, payouts and budget. | `offers` table, `src/bot/adsWizard.js` |
+| **Event type** | Target action the advertiser pays for (`join_group`, `start_bot`, `paid`, etc.). | `src/bot/constants.js`, wizard validation |
+| **Cap** | Limit on conversions or budget; enforced via `caps_total`, `budget_cents`, `budget_xtr`. | `offers` table, `adsWizardScene` |
+| **GEO targeting** | Whitelist of ISO country codes restricting traffic. | `geo_input`, `geo_list` columns; `parseGeoInput` |
+| **Start token** | One-time token issued on click and consumed by `/start`. Stored alongside the click row. | `src/api/click.js`, `clicks.start_token` |
+| **Attribution** | Mapping between Telegram user and click/offer, enabling conversion deduplication. | `attribution` table, `sendPostback` |
+| **Postback** | HTTP notification sent to partner about a conversion. Signed with `CPA_PB_SECRET`. | `src/services/postback.js`, `postbacks` table |
+| **CPA secret** | HMAC key appended as `X-Signature` header for partner integrations. | `CPA_PB_SECRET`, `sendPostback` |
+| **Wizard** | Telegraf Scenes flow guiding advertisers through offer creation. | `src/bot/adsWizard.js` |
+| **Debug token** | Shared secret for `/debug/*` HTTP endpoints and WhatsApp router. | `DEBUG_TOKEN`, `requireDebug` |
+| **Link capture** | Middleware that logs shared Telegram invite links for manual review. | `src/bot/link-capture.js` |

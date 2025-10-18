@@ -1,78 +1,88 @@
 # Inventory
 
-## Repository tree (depth ≤3)
+## Repository tree (depth ≤2)
+
 ```
 .
 ├─ DOCS/
-├─ README.md
-├─ Makefile
-├─ package.json
+├─ docs/
+├─ public/
 ├─ scripts/
-│  ├─ health.sh
-│  └─ test-webhook.sh
 ├─ src/
 │  ├─ api/
-│  │  └─ server.js
 │  ├─ bot/
-│  │  ├─ adsWizard.js
-│  │  ├─ link-capture.js
-│  │  ├─ sessionStore.js
-│  │  ├─ stat.js
-│  │  └─ telegraf.js
+│  ├─ constants/
 │  ├─ db/
-│  │  └─ index.js
+│  ├─ integrations/
 │  ├─ services/
-│  │  ├─ conversion.js
-│  │  ├─ joinCheck.js
-│  │  └─ postback.js
-│  └─ util/
-│     └─ id.js
-└─ tests/
+│  ├─ util/
+│  └─ utils/
+├─ tests/
+├─ ecosystem.config.cjs
+├─ ecosystem.env
+├─ package.json
+├─ package-lock.json
+└─ README.md
 ```
 
 ## Key modules and exports
 
 | File | Exports |
 | --- | --- |
-| `src/api/server.js` | `createApp`, `startServer` |
-| `src/bot/telegraf.js` | `bot`, `handleStartWithToken`, `handleClaimCommand`, `logUpdate`, default `bot` |
-| `src/bot/adsWizard.js` | `ADS_WIZARD_ID`, `GEO`, `adsWizardScene`, `initializeAdsWizard`, `startAdsWizard`, default `adsWizardScene` |
-| `src/bot/sessionStore.js` | `PostgresSessionStore`, `sessionStore` |
-| `src/bot/stat.js` | `registerStatHandlers`, `STAT_CALLBACK_PREFIX`, `__testables` |
-| `src/services/postback.js` | `sendPostback` |
-| `src/services/conversion.js` | `createConversion`, `approveJoin` |
-| `src/services/joinCheck.js` | `joinCheck`, `extractUsername` |
-| `src/db/index.js` | `query`, `pool`, `db`, `insertOfferAuditLog` |
-| `src/util/id.js` | `uuid`, `shortToken` |
+| `src/api/app.js` | `createApp()` – constructs the Express application (static assets, click tracking, CPA APIs). |
+| `src/api/server.js` | Side-effect module that bootstraps Express webhook server and binds `bot.handleUpdate`. |
+| `src/api/click.js` / `click.ts` | `handleClick(req, res)` handler for `/click/:offerId`. |
+| `src/api/cpa.js` | `cpaRouter` with partner API guarded by `X-Api-Key`. |
+| `src/api/wa.js` | `waRouter` for WhatsApp lead capture (debug-token protected). |
+| `src/bot/telegraf.js` | `bot`, `logUpdate`, `handleStartWithToken`, `handleClaimCommand`, `finalizeOfferAndInvoiceStars`, default `bot`. |
+| `src/bot/adsWizard.js` | `ADS_WIZARD_ID`, `GEO`, `adsWizardScene`, `initializeAdsWizard`, `startAdsWizard`, default scene. |
+| `src/bot/stat.js` | `STAT_CALLBACK_PREFIX`, `registerStatHandlers`, `__testables`. |
+| `src/bot/sessionStore.js` | `PostgresSessionStore`, `sessionStore`. |
+| `src/services/postback.js` | `sendPostback(payload, { dryRun })`. |
+| `src/services/conversion.js` | `createConversion(event)`, `approveJoin(update)`. |
+| `src/services/joinCheck.js` | `joinCheck(update)`, `extractUsername(entity)`. |
+| `src/db/index.js` | `query`, `pool`, `db`, `insertOfferAuditLog`. |
+| `src/util/id.js` | `uuid()`, `shortToken()`. |
+| `src/util/pricing.js` | `adjustPayoutCents(baseCents, geo)`. |
+| `src/util/xtr.js` | `centsToXtr(cents)`, `xtrToCents(xtr)`. |
 
-## Environment variables (usage)
+## Runtime binaries & scripts
 
-- `BOT_TOKEN` — Telegram bot token, required in `src/bot/telegraf.js` line 15.
-- `DISABLE_LINK_CAPTURE` — toggles optional middleware in `src/bot/telegraf.js` line 40.
-- `WEBHOOK_PATH` — webhook route suffix in `src/api/server.js` line 15.
-- `PORT` — HTTP port in `src/api/server.js` line 45.
-- `HOST` — HTTP host/interface in `src/api/server.js` line 46.
-- `ADMIN_IDS` — optional broadcast targets for offer notifications in `src/bot/adsWizard.js` line 307.
+| Command | Purpose |
+| --- | --- |
+| `npm run api` | Start webhook HTTP server (`src/api/server.js`). |
+| `npm run bot` | Run Telegraf long polling worker (`src/bot/run-bot.js`). |
+| `npm run migrate` | Apply SQL migrations (`src/db/migrate.js`). |
+| `npm run doctor` | Environment diagnostics (`scripts/doctor.js`). |
+| `scripts/health.sh` | Curl-based health probe for `/health`. |
+| `scripts/test-webhook.sh` | Sends sample `/start` payload to the webhook. |
+| `scripts/register-webhook.js` | Registers webhook with BotFather API. |
 
-Additional configuration (database, CPA, etc.) is loaded via `src/config.js`.
+## HTTP routes (Express)
 
-## HTTP routes
-
-| Method | Path | File:Line |
+| Method | Path | Module |
 | --- | --- | --- |
-| `GET` | `/health` | `src/api/server.js`:11 |
-| `POST` | `WEBHOOK_PATH` (defaults to `/bot/webhook`) | `src/api/server.js`:18 |
-| `*` | fallback JSON 404 | `src/api/server.js`:30 |
+| `GET` | `/health` | `src/api/server.js`, `src/api/app.js` |
+| `GET` | `/` | `src/api/server.js` (webhook process info) |
+| `POST` | `/bot/webhook` (default) | `src/api/server.js` → `bot.handleUpdate` |
+| `GET` | `/click/:offerId` | `src/api/click.js` |
+| `POST` | `/offers` | `src/api/app.js` |
+| `POST` | `/api/offers` | `src/api/server.js` (admin) |
+| `POST` | `/api/pay/:id` | `src/api/server.js` (debug invoice) |
+| `GET` | `/api/offers` | `src/api/server.js` (admin) |
+| `GET` | `/api/cpa/offers/:id` | `src/api/cpa.js` |
+| `GET` | `/api/wa/*` | `src/api/wa.js` |
+| `POST` | `/debug/complete` | `src/api/app.js` |
+| `GET` | `/debug/last` | `src/api/app.js` |
+| `GET` | `/debug/ping` | `src/api/app.js` |
 
-## Telegraf handlers & scenes
+## Telegram commands & actions
 
-- Stage initialisation at `src/bot/telegraf.js`:23–38 with `adsWizardScene` as the only scene.
-- Optional `link-capture` middleware loaded when `DISABLE_LINK_CAPTURE !== 'true'` (`src/bot/telegraf.js`:40–55).
-- `bot.start` handles `/start` payload routing (`src/bot/telegraf.js`:114–127).
-- `bot.command('ads')` launches the ads wizard (`src/bot/telegraf.js`:129–138).
-- `bot.command('claim')` parses `/claim <TOKEN>` (`src/bot/telegraf.js`:219).
-- `bot.hears(/^\/go …/)` QA shortcut for synthetic tokens (`src/bot/telegraf.js`:219–262).
-- `bot.command('whoami')`, `bot.command('help')`, `bot.command('cancel')` handle utility flows (`src/bot/telegraf.js`:265–299).
-- `bot.on(['chat_member','my_chat_member'])` reacts to join events (`src/bot/telegraf.js`:301–357).
-- `bot.action(/^check:…/)` manual conversion check (`src/bot/telegraf.js`:359–422).
-- `registerStatHandlers` wires `/stat` command and callbacks via `src/bot/stat.js` (`src/bot/telegraf.js`:97).
+- `/start` — deep-link aware onboarding handled in `handleStartWithToken`.
+- `/ads` — launches `adsWizardScene` for approved advertisers.
+- `/claim` — redeem invite tokens issued by the wizard.
+- `/whoami`, `/help`, `/cancel` — utility flows for any user.
+- `/stat` — stats dashboard (registered via `registerStatHandlers`).
+- Admin only: `/admin_offers`, `/offer_status`, debug callbacks under `STAT_CALLBACK_PREFIX`.
+
+Join events (`chat_member`, `my_chat_member`) and callback buttons trigger conversion checks and postbacks.

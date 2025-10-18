@@ -1,44 +1,50 @@
-# SYSTEM OVERVIEW
+# System overview
 
-## Архитектура и точки входа
-- **HTTP API / вебхук** — Express-приложение создаётся в `src/api/app.js` (функция `createApp`) и поднимается через `src/api/server.js`. Конфигурация PM2 указывает на `src/api/server.js`, процесс называется `tg-api` (`ecosystem.config.cjs`).
-- **Telegram-бот** — основная инициализация Telegraf и сцены описаны в `src/bot/telegraf.js`; точка запуска long polling для разработки — `src/bot/run-bot.js`.
-- **Конфигурация** — сбор переменных окружения в `src/config.js`, экспорт `config` используется и в API, и в боте.
-- **База данных** — подключение к PostgreSQL через пул `pg.Pool` в `src/db/index.js`; миграции запускаются скриптом `src/db/migrate.js`.
+## Entry points
 
-> ⚠️ Поскольку `src/api/server.js` напрямую использует `express` и `body-parser`, но не импортирует их (см. файл), сервер в текущем состоянии не стартует. В `ROADMAP.md` помечено как P0 с рекомендацией использовать `createApp()`.
+- **Express webhook server** — `src/api/server.js` bootstraps an Express app, registers health checks, webhook guard and admin APIs, then delegates updates to `bot.handleUpdate`.
+- **Telegraf bot** — initialisation lives in `src/bot/telegraf.js`; long polling helper in `src/bot/run-bot.js` is used for local development.
+- **Configuration** — `src/config.js` collects environment variables, validates URLs and exposes derived values (`config`).
+- **Database** — PostgreSQL pool and helpers reside in `src/db/index.js`; migrations are applied via `src/db/migrate.js`.
 
-## Модули и директории
-| Директория | Назначение |
-|------------|------------|
-| `src/api/` | HTTP-эндпоинты (`/health`, `/click/:offerId`, `/postbacks/relay`, debug-хуки) и webhook для бота. |
-| `src/bot/` | Логика Telegraf: сцены (`adsWizard.js`), команды (`telegraf.js`), запуск polling (`run-bot.js`). |
-| `src/constants/` | Доменные константы (типы событий). |
-| `src/db/` | Подключение к БД, вспомогательные операции (insert audit). |
-| `src/util/` | Генерация UUID/short token, HMAC. |
-| `tests/` | Smoke-тесты API (Jest + Supertest) и подготовка env. |
+## Module layout
 
-## Поток данных и интеграции
-1. **Входной трафик**: пользователь CPA сети получает ссылку вида `GET /click/:offerId`. Контроллер сохраняет клик в таблицу `clicks`, генерирует короткий `start`-токен (`start_tokens`) и редиректит в Telegram (`src/api/app.js`, `app.get('/click/:offerId', ...)`).
-2. **Старт в боте**: пользователь запускает бота с `start`-токеном. В webhook (`/bot/webhook`) Telegraf сопоставляет `start_tokens` → `attribution` в сцене `ads-wizard` (подробнее в `API_AND_COMMANDS.md`).
-3. **Мастер создания оффера**: рекламодатель проходит сцену `/ads`, бот валидирует ввод и создаёт запись `offers` (`src/bot/adsWizard.js`). Параллельно записываются аудит-логи (`insertOfferAuditLog`).
-4. **Трекинг событий**: бот реагирует на обновления Telegram (реакции, join, comment) и пишет их в таблицу `events` (см. хендлеры внутри `adsWizard.js`, секция подтверждения — поиск `query('INSERT INTO offers ...')`).
-5. **Постбеки**: завершённые события отправляются в CPA сеть через `sendCpaPostback`, используется HMAC-подпись (`src/api/app.js`, `axios.post(config.cpaPostbackUrl, ...)`). Дополнительно, интеграция для внешних ботов (`POST /postbacks/relay`) ищет атрибуцию и отправляет постбек.
-6. **Debug-инструменты**: эндпоинты `/debug/seed_offer` и `/debug/complete` доступны только с заголовком `x-debug-token`, помогают быстро подготовить данные для тестов.
+| Directory | Purpose |
+| --- | --- |
+| `src/api/` | Express routes for webhook, click tracking, CPA partner API, debug tooling. |
+| `src/bot/` | Telegraf scenes, commands, session store, auxiliary middleware. |
+| `src/constants/` | Domain constants (event types, limits). |
+| `src/integrations/` | Ad network and WhatsApp helpers. |
+| `src/services/` | Business logic for postbacks, conversions, join checks. |
+| `src/util/` & `src/utils/` | Shared helpers (IDs, pricing, Telegram utilities, validation). |
+| `tests/` | Node test runner suites covering click redirect, debug tools, postback signing. |
 
-## Обработка обновлений Telegram
-- Все апдейты проходят middleware-лог (`bot.use` в `src/bot/telegraf.js`).
-- Сессии пользователей хранятся в памяти Telegraf (`session()`), что важно при деплое — несколько инстансов потребуют внешнее хранилище.
-- Сцены подключаются через `Scenes.Stage`, основная сцена — `adsWizard` (идентификатор `ads-wizard`). Команда `/ads` переводит пользователя в мастер, `/whoami` выдаёт Telegram ID, `/start` показывает приветствие.
-- Обработчик `bot.on('text')` работает как fallback echo вне сцены.
+## Data flow
 
-## Внешние зависимости
-- **PostgreSQL** — хранение офферов, кликов, атрибуции, событий, аудита, postback-очереди.
-- **CPA сеть** — HTTP POST (`config.cpaPostbackUrl`) с подписью HMAC SHA256 (`config.cpaSecret`).
-- **PM2** — процесс-менеджер для продакшена; конфиг `ecosystem.config.cjs` использует переменные из `.env`.
-- **GitHub Actions** — CI (`.github/workflows/test.yml`) и деплой по SSH (`deploy.yml`).
+1. **Clicks** — Users land on `/click/:offerId`. The handler validates the offer, stores a click row, creates a short start token and redirects to `https://t.me/${botUsername}?start=${token}`.
+2. **Onboarding** — `/start` with payload reaches the webhook. `handleStartWithToken` links the Telegram user to the click (`attribution`), renders CTA buttons and, when relevant, writes audit logs.
+3. **Wizard** — `/ads` triggers `adsWizardScene` which collects offer data, enforces minimum payouts, normalises GEO inputs and inserts into `offers` while logging actions to `offer_audit_log`.
+4. **Events & conversions** — Join updates and manual callbacks run through `approveJoin`/`createConversion`, generate `events` rows and queue CPA postbacks (`postbacks`).
+5. **Postbacks** — `sendPostback` signs payloads with `CPA_PB_SECRET` and retries on failure. Deduplication is enforced by storing `idempotency_key` and `dedup_key`.
+6. **Partner API** — `/api/cpa/offers/:id` exposes offer metadata to trusted partners authorised via `X-Api-Key`.
 
-## Логирование и мониторинг
-- Бот логирует каждое обновление (`console.log` в middleware) и ошибки отправки сообщений.
-- API логирует ошибки отправки постбеков и работы debug endpoints.
-- Локальный health-check: `GET /health` возвращает `{ ok: true }`.
+## Telegram update handling
+
+- Middleware: sessions stored in PostgreSQL via `sessionStore`, optional `link-capture` logs suspicious invite links when enabled.
+- Commands: `/start`, `/ads`, `/claim`, `/whoami`, `/help`, `/cancel`, `/stat`, plus admin commands for offer inspection.
+- Callbacks: Stats keyboard, manual conversion checks and wizard inline buttons are processed with `bot.action` handlers.
+- Error handling: `bot.catch` logs stack traces; ensure production logs are aggregated via PM2 or external logging.
+
+## External integrations
+
+- **PostgreSQL** for persistent state (`DATABASE_URL`).
+- **CPA endpoint** defined by `CPA_POSTBACK_URL`; signed requests with `CPA_PB_SECRET`.
+- **Telegram Bot API** for webhook updates and inline keyboards.
+- **PM2** handles process supervision using `ecosystem.config.cjs`.
+- **GitHub Actions** run tests (`.github/workflows/test.yml`) and deploy over SSH (`deploy.yml`).
+
+## Observability
+
+- Health check: `GET /health` returns `{ ok: true }` from both the webhook server and the app built by `createApp()`.
+- Logs: `console.log`/`console.error` are used across the app; PM2 captures stdout/stderr. Consider adding structured logging for production.
+- Metrics: Not yet instrumented. Suggested next steps include Prometheus exporter or log-based dashboards (see [docs/ROADMAP.md](./ROADMAP.md)).

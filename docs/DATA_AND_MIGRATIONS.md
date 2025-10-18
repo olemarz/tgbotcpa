@@ -1,34 +1,29 @@
-# DATA & MIGRATIONS
+# Data & Migrations
 
-## Скрипты миграций
-- `npm run migrate` запускает `src/db/migrate.js`, который выполняет SQL-скрипт создания всех таблиц.
-- Подключение к БД определяется переменной `DATABASE_URL` (см. `src/db/index.js`).
-- Скрипт idempotent: использует `CREATE TABLE IF NOT EXISTS` и `CREATE INDEX IF NOT EXISTS`.
+## Migration tooling
 
-## Схема базы данных
-| Таблица | Ключевые поля | Назначение |
-|---------|---------------|------------|
-| `offers` | `id UUID PK`, `target_url`, `event_type`, `base_rate`, `premium_rate`, `status` | Хранение офферов, созданных через `/ads`. Доп.поля: `caps_total`, `geo_mode`, `geo_list`, `reaction_whitelist JSONB`, `chat_ref JSONB`, `created_at`. |
-| `clicks` | `id UUID PK`, `offer_id UUID`, `uid TEXT`, `subs JSONB` | Фиксация кликов из CPA ссылок. |
-| `start_tokens` | `token TEXT PK`, `offer_id UUID`, `uid TEXT`, `exp_at TIMESTAMPTZ` | Одноразовые токены для `/start` параметра в Telegram. |
-| `attribution` | PK по `(user_id BIGINT, offer_id UUID)`, `uid TEXT`, `is_premium BOOLEAN`, `first_seen`, `last_seen` | Соответствие Telegram пользователя клику и офферу. |
-| `events` | `id UUID PK`, `offer_id`, `uid`, `user_id`, `event_type`, `payload JSONB`, `idempotency_key` | Журнал целевых событий (реакции, вступления, покупки). Может содержать `chat_id`, `message_id`, `thread_id`, `poll_id`. |
-| `postbacks` | `id UUID PK`, `offer_id`, `uid`, `url TEXT`, `payload JSONB`, `status`, `attempts`, `last_try_at` | Очередь на повторную отправку постбеков в CPA сеть. |
-| `offer_audit_log` | `id UUID PK`, `offer_id`, `action`, `user_id`, `chat_id`, `details JSONB`, `created_at` | Аудит действий мастера (создание, обновления). |
+- `npm run migrate` executes `src/db/migrate.js`. The script applies SQL files under `src/db/migrations/` and records progress in `_migrations`.
+- Migrations run inside a transaction per file and are idempotent (`IF NOT EXISTS`).
+- When `SEED=1`, SQL files from `src/db/seeds/` are executed to pre-populate demo data.
+- Connection string is sourced from `DATABASE_URL`. In tests (`pgmem://`) the shared pool is reused.
 
-## Работа с миграциями
-```bash
-npm run migrate
-# вывод: Migration complete
-```
+## Schema highlights
 
-### Повторный запуск
-Скрипт безопасен для повторного запуска (проверки `IF NOT EXISTS`).
+| Table | Purpose | Notable columns |
+| --- | --- | --- |
+| `offers` | Advertiser offers created via bot or APIs. | `target_url`, `event_type`, `payout_cents`, `budget_cents`, `geo_input`, `geo_list`, `status`, `created_by_tg_id`, `tracking_url`. |
+| `clicks` | Raw CPA click records feeding attribution. | `offer_id`, `uid`, `click_id`, `start_token`, `tg_id`, `subs`, `ip`, `ua`, `used_at`. |
+| `attribution` | Maps Telegram users to offers/clicks. | `tg_id`, `offer_id`, `uid`, `state`, `first_seen`, `last_seen`, `is_premium`. |
+| `events` | Target actions detected by the bot (join, start, etc.). | `type`, `tg_id`, `offer_id`, `payload`, `idempotency_key`. |
+| `postbacks` | Delivery log for CPA postbacks. | `status`, `http_status`, `dedup_key`, `last_try_at`, `attempts`, `payload`. |
+| `offer_audit_log` | Audit trail for wizard actions. | `action`, `user_id`, `chat_id`, `details`. |
+| `sessions` | Telegraf session storage. | `key`, `session jsonb`, TTL metadata. |
 
-### Seed-данные
-- На текущей версии отдельного seed-скрипта нет. Для подготовки тестовых данных используйте `POST /debug/seed_offer` (см. `API_AND_COMMANDS.md`).
-- TODO: добавить автоматический seed с тестовым оффером и кликом для smoke-тестов.
+Refer to the SQL files for the exact column set (`src/db/migrations/*.sql`).
 
-## Резервное копирование
-- Для PostgreSQL используйте `pg_dump` / `pg_restore`.
-- Минимальный набор таблиц для бэкапа: `offers`, `clicks`, `attribution`, `events`, `postbacks`, `offer_audit_log`.
+## Operational notes
+
+- Re-running `npm run migrate` is safe; already applied files are skipped.
+- Always back up `offers`, `clicks`, `attribution`, `events`, `postbacks`, `offer_audit_log` before destructive schema changes.
+- Use `psql $DATABASE_URL` or `npm run doctor` to verify connectivity prior to migration windows.
+- Seeds are optional and should not be enabled in production environments.

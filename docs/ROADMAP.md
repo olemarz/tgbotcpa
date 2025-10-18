@@ -1,17 +1,17 @@
-# ROADMAP
+# Roadmap
 
-## P0 (критичное)
-- [ ] Исправить `src/api/server.js`: использовать `createApp()` из `src/api/app.js` и добавить отсутствующие импорты (`express`, `body-parser`, `axios`, `crypto`, `query`, `bot`, `shortToken`, `uuid`, `hmacSHA256Hex`). Сейчас процесс падает сразу при запуске (`npm run start`, PM2). Временно фикс задокументирован в `RUN_LOCAL.md`.
-- [ ] Привести CI workflow к рабочему состоянию: либо добавить `"test:ci"` в `package.json`, либо обновить `.github/workflows/test.yml` на `npm test`. Без этого все PR в `main` будут падать на шаге `npm run test:ci`.
-- [ ] Настроить автоматический запуск миграций при деплое (в `deploy.yml` сейчас строчка закомментирована). Убедиться, что `npm run migrate` выполняется в CI/CD и на сервере перед рестартом PM2.
+## P0 — Critical
+- [ ] Harden webhook server with rate limiting and request logging (prevent abuse, aid incident response).
+- [ ] Automate database backups and retention policy for `offers`, `clicks`, `events`, `postbacks` tables.
+- [ ] Introduce monitoring/alerting (health endpoint checks, PostgreSQL connection metrics).
 
-## P1 (важно)
-- [ ] Устранить дублирование логики между `src/api/app.js` и `src/api/server.js` (поддерживать единый код создания Express-приложения).
-- [ ] Добавить централизованную обработку ошибок и логирование (`pino` или `winston`) вместо `console.log`/`console.error` для структурированных логов.
-- [ ] Вынести сессии Telegraf в внешнее хранилище (Redis) для последующего масштабирования и устойчивости.
+## P1 — Important
+- [ ] Consolidate Express bootstrap so `src/api/server.js` reuses `createApp()` (single source of truth for middleware).
+- [ ] Add integration tests for `/api/cpa/*` and `/api/offers` covering auth failures and success paths.
+- [ ] Implement session eviction/TTL cleanup for Telegraf sessions to prevent unbounded growth.
 
-## P2 (улучшения)
-- [ ] Реализовать учёт уникальных переходов в `/s/:shareToken` (TODO в коде) и сохранить структуру данных в БД.
-- [ ] Добавить seed-скрипт с тестовым оффером/кликом для локальной разработки (`npm run seed`).
-- [ ] Расширить автоматические тесты: покрыть сцену `/ads` (валидации) и эндпоинты `/click`, `/postbacks/relay` с моками БД.
-- [ ] Документировать сценарии постбеков с примерами payload (JSON-образцы для CPA сетей).
+## P2 — Enhancements
+- [ ] Provide seed script for demo offer, click and conversion for quick onboarding (`npm run seed`).
+- [ ] Publish CPA postback examples (JSON + signature instructions) in docs.
+- [ ] Instrument conversion funnel metrics (clicks → attribution → postbacks) and expose via dashboard or logs.
+- [ ] Localise advertiser wizard prompts (RU/EN) based on operator preference.
