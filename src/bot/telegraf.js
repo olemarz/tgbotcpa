@@ -22,16 +22,16 @@ if (!BOT_TOKEN) {
 
 export const bot = new Telegraf(BOT_TOKEN);
 
+// сцены
 const stage = new Scenes.Stage([adsWizardScene]);
 
+// сессии (твой кастомный store)
 bot.use(
   session({
     store: sessionStore,
     getSessionKey(ctx) {
       const fromId = ctx.from?.id;
-      if (!['string', 'number', 'bigint'].includes(typeof fromId)) {
-        return undefined;
-      }
+      if (!['string', 'number', 'bigint'].includes(typeof fromId)) return undefined;
       const key = String(fromId);
       return /^[0-9]+$/.test(key) ? key : undefined;
     },
@@ -39,6 +39,7 @@ bot.use(
 );
 bot.use(stage.middleware());
 
+// link-capture (по флагу)
 if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   try {
     const module = await import('./link-capture.js');
@@ -56,6 +57,8 @@ if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   console.log('[BOOT] link-capture disabled');
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
 function escapeHtml(value) {
   if (value === null || value === undefined) return '';
   return String(value)
@@ -66,35 +69,37 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-async function replyHtml(ctx, html, extra = {}) {
-  return ctx.reply(html, { parse_mode: 'HTML', ...extra });
-}
-
-
+// одна версия replyHtml (без дублей)
+// убираем <br>, оставляем поддерживаемые html-теги, остальное затираем
 function sanitizeTelegramHtml(input) {
-  // 1) заменяем <br> на \n
-  let s = String(input).replace(/<br\s*\/?>/gi, '\n');
+  let s = String(input);
 
-  // 2) выкидываем неподдерживаемые теги (оставляем только whitelisted теги Tg)
-  // Разрешены: b,strong,i,em,u,ins,s,strike,del,a,code,pre,span (частично),tg-emoji
-  // Ниже — мягкая зачистка всего, что выглядит как <tag ...> кроме разрешённых.
-  s = s.replace(/<(?!\/?(?:b|strong|i|em|u|ins|s|strike|del|a|code|pre)\b)[^>]*>/gi, '');
+  // <br> -> \n
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+
+  // выкидываем любые теги, кроме допустимых: b,strong,i,em,u,ins,s,strike,del,a,code,pre
+  s = s.replace(
+    /<(?!\/?(?:b|strong|i|em|u|ins|s|strike|del|a|code|pre)\b)[^>]*>/gi,
+    '',
+  );
 
   return s;
 }
 
 async function replyHtml(ctx, html, extra = {}) {
-  const safe = Array.isArray(html) ? html.map(sanitizeTelegramHtml).join('\n') : sanitizeTelegramHtml(html);
+  const safe = Array.isArray(html)
+    ? html.map(sanitizeTelegramHtml).join('\n')
+    : sanitizeTelegramHtml(html);
   return ctx.reply(safe, { parse_mode: 'HTML', ...extra });
 }
 
-// --- helper: admin context
 function isAdminCtx(ctx) {
   const adminId = Number(process.env.ADMIN_TG_ID || 0);
   return adminId && ctx.from?.id && Number(ctx.from.id) === adminId;
 }
 
-// /admin_offers — последние 20 офферов
+// ─── admin команды ────────────────────────────────────────────────────────────
+
 bot.command('admin_offers', async (ctx) => {
   if (!isAdminCtx(ctx)) return;
   const r = await query(
@@ -112,18 +117,23 @@ bot.command('admin_offers', async (ctx) => {
   await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
 });
 
-// /offer_status <UUID> <active|paused|stopped|draft>
 bot.command('offer_status', async (ctx) => {
   if (!isAdminCtx(ctx)) return;
-  const m = (ctx.message?.text || '').match(/^\/offer_status\s+([0-9a-f-]{36})\s+(active|paused|stopped|draft)$/i);
+  const m = (ctx.message?.text || '').match(
+    /^\/offer_status\s+([0-9a-f-]{36})\s+(active|paused|stopped|draft)$/i,
+  );
   if (!m) return ctx.reply('Формат: /offer_status <UUID> <active|paused|stopped|draft>');
   const [, id, st] = m;
-  const r = await query(`UPDATE offers SET status=$2 WHERE id=$1 RETURNING id,status`, [id, st.toLowerCase()]);
+  const r = await query(
+    `UPDATE offers SET status=$2 WHERE id=$1 RETURNING id,status`,
+    [id, st.toLowerCase()],
+  );
   if (!r.rowCount) return ctx.reply('Не найдено');
   await ctx.reply(`OK: ${r.rows[0].id} → ${r.rows[0].status}`);
 });
 
-// --- Stars billing helpers (динамика по схеме offers)
+// ─── Stars billing helpers ────────────────────────────────────────────────────
+
 let offersColumnsPromise;
 async function getOfferColumns() {
   if (!offersColumnsPromise) {
@@ -138,10 +148,15 @@ function normalizeGeoForInsert(geo) {
   const list = (() => {
     if (!geo) return [];
     if (Array.isArray(geo)) {
-      return geo.map(v => (typeof v === 'string' ? v.trim().toUpperCase() : '')).filter(Boolean);
+      return geo
+        .map((v) => (typeof v === 'string' ? v.trim().toUpperCase() : ''))
+        .filter(Boolean);
     }
     if (typeof geo === 'string') {
-      return geo.split(/[,\s]+/).map(p => p.trim().toUpperCase()).filter(Boolean);
+      return geo
+        .split(/[,\s]+/)
+        .map((p) => p.trim().toUpperCase())
+        .filter(Boolean);
     }
     return [];
   })();
@@ -149,69 +164,104 @@ function normalizeGeoForInsert(geo) {
   return { list: list.length ? list : null, input: geoInput };
 }
 
-// ВАЖНО: требуются импорты сверху файла:
-//   import { adjustPayoutCents } from '../util/pricing.js';
-//   import { centsToXtr } from '../util/xtr.js';
-
 export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const columns = await getOfferColumns();
   const tgId = ctx.from?.id ?? null;
 
-  const basePayoutCents = Number.isFinite(Number(form?.payout_cents)) ? Number(form.payout_cents) : 0;
+  const basePayoutCents = Number.isFinite(Number(form?.payout_cents))
+    ? Number(form.payout_cents)
+    : 0;
   const geo = form?.geo ?? null;
-  const payoutAdjusted = adjustPayoutCents(basePayoutCents, geo); // +30% на high GEO с ceil
+  const payoutAdjusted = adjustPayoutCents(basePayoutCents, geo); // +30% для high GEO с округлением вверх
 
-  const providedBudgetCents = Number.isFinite(Number(form?.budget_cents)) ? Number(form.budget_cents) : 0;
-  const normalizedBudgetCents = providedBudgetCents > 0 ? providedBudgetCents : payoutAdjusted;
+  const providedBudgetCents = Number.isFinite(Number(form?.budget_cents))
+    ? Number(form.budget_cents)
+    : 0;
+  const normalizedBudgetCents =
+    providedBudgetCents > 0 ? providedBudgetCents : payoutAdjusted;
 
-  const providedBudgetXtr = Number.isFinite(Number(form?.budget_xtr)) ? Number(form.budget_xtr) : null;
-  const normalizedBudgetXtr = providedBudgetXtr && providedBudgetXtr > 0
-    ? Math.floor(providedBudgetXtr)
-    : centsToXtr(normalizedBudgetCents);
+  const providedBudgetXtr = Number.isFinite(Number(form?.budget_xtr))
+    ? Number(form.budget_xtr)
+    : null;
+  const normalizedBudgetXtr =
+    providedBudgetXtr && providedBudgetXtr > 0
+      ? Math.floor(providedBudgetXtr)
+      : centsToXtr(normalizedBudgetCents);
 
   const insertColumns = [];
   const values = [];
   const params = [];
-  const push = (column, value) => { if (!columns.has(column)) return; insertColumns.push(column); values.push(value); params.push(`$${values.length}`); };
+  const push = (column, value) => {
+    if (!columns.has(column)) return;
+    insertColumns.push(column);
+    values.push(value);
+    params.push(`$${values.length}`);
+  };
 
   const title = form?.title ?? form?.name ?? null;
-  if (columns.has('title')) push('title', title); else if (columns.has('name')) push('name', title);
+  if (columns.has('title')) push('title', title);
+  else if (columns.has('name')) push('name', title);
 
   if (form?.slug != null) push('slug', form.slug);
   if (columns.has('target_url')) push('target_url', form?.target_url ?? null);
-  if (columns.has('target_link') && form?.target_link != null) push('target_link', form.target_link);
-  if (columns.has('event_type')) push('event_type', form?.event_type ?? 'join_group');
+  if (columns.has('target_link') && form?.target_link != null)
+    push('target_link', form.target_link);
+  if (columns.has('event_type'))
+    push('event_type', form?.event_type ?? 'join_group');
 
   if (columns.has('payout_cents')) push('payout_cents', payoutAdjusted);
 
-  const baseRateRub = Number.isFinite(Number(form?.base_rate_rub)) ? Number(form.base_rate_rub)
-    : Number.isFinite(Number(form?.base_rate)) ? Number(form.base_rate) : null;
-  const baseRateCents = Number.isFinite(Number(form?.base_rate_cents)) ? Number(form.base_rate_cents)
-    : baseRateRub != null ? Math.round(baseRateRub * 100) : null;
+  const baseRateRub = Number.isFinite(Number(form?.base_rate_rub))
+    ? Number(form.base_rate_rub)
+    : Number.isFinite(Number(form?.base_rate))
+    ? Number(form.base_rate)
+    : null;
+  const baseRateCents = Number.isFinite(Number(form?.base_rate_cents))
+    ? Number(form.base_rate_cents)
+    : baseRateRub != null
+    ? Math.round(baseRateRub * 100)
+    : null;
   if (columns.has('base_rate')) {
     if (baseRateCents != null) push('base_rate', baseRateCents);
     else if (baseRateRub != null) push('base_rate', baseRateRub);
-    else if (!columns.has('payout_cents')) push('base_rate', Math.round(payoutAdjusted / 100));
+    else if (!columns.has('payout_cents'))
+      push('base_rate', Math.round(payoutAdjusted / 100));
   }
 
-  const premiumRateRub = Number.isFinite(Number(form?.premium_rate_rub)) ? Number(form.premium_rate_rub)
-    : Number.isFinite(Number(form?.premium_rate)) ? Number(form.premium_rate) : null;
-  const premiumRateCents = Number.isFinite(Number(form?.premium_rate_cents)) ? Number(form.premium_rate_cents)
-    : premiumRateRub != null ? Math.round(premiumRateRub * 100) : null;
+  const premiumRateRub = Number.isFinite(Number(form?.premium_rate_rub))
+    ? Number(form.premium_rate_rub)
+    : Number.isFinite(Number(form?.premium_rate))
+    ? Number(form.premium_rate)
+    : null;
+  const premiumRateCents = Number.isFinite(Number(form?.premium_rate_cents))
+    ? Number(form.premium_rate_cents)
+    : premiumRateRub != null
+    ? Math.round(premiumRateRub * 100)
+    : null;
   if (columns.has('premium_rate')) {
     if (premiumRateCents != null) push('premium_rate', premiumRateCents);
     else if (premiumRateRub != null) push('premium_rate', premiumRateRub);
   }
 
-  if (columns.has('caps_total') && form?.caps_total != null) push('caps_total', form.caps_total);
+  if (columns.has('caps_total') && form?.caps_total != null)
+    push('caps_total', form.caps_total);
   if (columns.has('budget_cents')) push('budget_cents', normalizedBudgetCents);
   if (columns.has('budget_xtr')) push('budget_xtr', normalizedBudgetXtr);
 
   const geoNormalized = normalizeGeoForInsert(geo);
-  if (columns.has('geo')) push('geo', Array.isArray(geoNormalized.list) ? geoNormalized.list.join(',') : geoNormalized.input);
-  if (columns.has('geo_input') && geoNormalized.input !== null) push('geo_input', geoNormalized.input);
-  if (columns.has('geo_list') && geoNormalized.list) push('geo_list', geoNormalized.list);
-  if (columns.has('geo_whitelist') && geoNormalized.list) push('geo_whitelist', geoNormalized.list);
+  if (columns.has('geo'))
+    push(
+      'geo',
+      Array.isArray(geoNormalized.list)
+        ? geoNormalized.list.join(',')
+        : geoNormalized.input,
+    );
+  if (columns.has('geo_input') && geoNormalized.input !== null)
+    push('geo_input', geoNormalized.input);
+  if (columns.has('geo_list') && geoNormalized.list)
+    push('geo_list', geoNormalized.list);
+  if (columns.has('geo_whitelist') && geoNormalized.list)
+    push('geo_whitelist', geoNormalized.list);
 
   if (columns.has('created_by_tg')) push('created_by_tg', tgId);
   if (columns.has('created_by_tg_id')) push('created_by_tg_id', tgId);
@@ -220,8 +270,11 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const text = `
     INSERT INTO offers (id${insertColumns.length ? ',' + insertColumns.join(',') : ''})
     VALUES (gen_random_uuid()${params.length ? ',' + params.join(',') : ''})
-    RETURNING id${columns.has('title') ? ', title' : ''}${!columns.has('title') && columns.has('name') ? ', name' : ''}${
-      columns.has('budget_cents') ? ', budget_cents' : ''}${columns.has('budget_xtr') ? ', budget_xtr' : ''}
+    RETURNING id${columns.has('title') ? ', title' : ''}${
+      !columns.has('title') && columns.has('name') ? ', name' : ''
+    }${columns.has('budget_cents') ? ', budget_cents' : ''}${
+      columns.has('budget_xtr') ? ', budget_xtr' : ''
+    }
   `;
 
   const ins = await query(text, values);
@@ -229,11 +282,17 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const offer = {
     id: row.id,
     title: row.title ?? row.name ?? title ?? row.id,
-    budget_cents: columns.has('budget_cents') ? row.budget_cents ?? normalizedBudgetCents : normalizedBudgetCents,
-    budget_xtr: columns.has('budget_xtr') ? row.budget_xtr ?? normalizedBudgetXtr : normalizedBudgetXtr,
+    budget_cents: columns.has('budget_cents')
+      ? row.budget_cents ?? normalizedBudgetCents
+      : normalizedBudgetCents,
+    budget_xtr: columns.has('budget_xtr')
+      ? row.budget_xtr ?? normalizedBudgetXtr
+      : normalizedBudgetXtr,
   };
 
-  const amountInStars = offer.budget_xtr || centsToXtr(offer.budget_cents);
+  const amountInStars =
+    offer.budget_xtr || centsToXtr(offer.budget_cents);
+
   await ctx.replyWithInvoice({
     title: `Оплата оффера: ${offer.title || offer.id}`,
     description: `Бюджет: ${amountInStars} XTR. Payout: ${(payoutAdjusted / 100).toFixed(2)} ₽`,
@@ -244,19 +303,10 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
     start_parameter: String(offer.id),
   });
 
-/*  await replyHtml(
-    ctx,
-    [
-//       '✅ Оффер создан. Счёт выставлен через Telegram Stars.',
-      `ID: <code>${offer.id}</code>`,
-      'После оплаты оффер станет <b>active</b>.',
-    ].join('\n'),
-    { disable_web_page_preview: true },
-  ); */
-
   return offer;
 }
 
+// ─── логгирование апдейтов ───────────────────────────────────────────────────
 
 bot.use(async (ctx, next) => {
   const { updateType } = ctx;
@@ -286,6 +336,7 @@ export function logUpdate(ctx, tag = 'update') {
 
 registerStatHandlers(bot, { logUpdate });
 
+// сброс ожиданий при слэш-командах
 bot.use(async (ctx, next) => {
   const text = ctx.message?.text ?? '';
   if (typeof text === 'string' && text.trimStart().startsWith('/')) {
@@ -299,6 +350,8 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+// ─── команды и обработчики ────────────────────────────────────────────────────
+
 const JOIN_GROUP_EVENT = 'join_group';
 
 bot.start(async (ctx) => {
@@ -310,10 +363,10 @@ bot.start(async (ctx) => {
     return;
   }
 
-  await replyHtml(
-    ctx,
-    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:\n<code>/claim &lt;TOKEN&gt;</code>',
-  );
+  await replyHtml(ctx, [
+    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:',
+    '<code>/claim &lt;TOKEN&gt;</code>',
+  ]);
 });
 
 bot.command('ads', async (ctx) => {
@@ -490,6 +543,7 @@ bot.command('cancel', async (ctx) => {
   }
 });
 
+// вступление в группу (chat_member)
 bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   logUpdate(ctx, 'chat_member');
   const upd = ctx.update.chat_member || ctx.update.my_chat_member;
@@ -548,6 +602,7 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   }
 });
 
+// платежи Stars
 bot.on('pre_checkout_query', async (ctx) => {
   try {
     await ctx.answerPreCheckoutQuery(true);
@@ -609,12 +664,8 @@ bot.on('message', async (ctx, next) => {
       returning.push('status');
     }
 
-    if (columns.has('budget_xtr')) {
-      returning.push('budget_xtr');
-    }
-    if (columns.has('budget_cents')) {
-      returning.push('budget_cents');
-    }
+    if (columns.has('budget_xtr')) returning.push('budget_xtr');
+    if (columns.has('budget_cents')) returning.push('budget_cents');
 
     const result = await query(
       `UPDATE offers SET ${updateParts.join(', ')} WHERE id=$1 RETURNING ${[...new Set(returning)].join(', ')}`,
@@ -648,6 +699,7 @@ bot.on('message', async (ctx, next) => {
   }
 });
 
+// check: кнопка
 bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
   logUpdate(ctx, 'check');
 
@@ -713,8 +765,13 @@ bot.action(/^check:([\w-]{6,64})$/i, async (ctx) => {
   }
 });
 
-bot.catch((err, ctx) => console.error('[TELEGRAF] error', ctx.update?.update_id, err?.stack || err));
-process.on('unhandledRejection', (error) => console.error('[UNHANDLED]', error?.stack || error));
+// общие ловушки ошибок
+bot.catch((err, ctx) =>
+  console.error('[TELEGRAF] error', ctx.update?.update_id, err?.stack || err),
+);
+process.on('unhandledRejection', (error) =>
+  console.error('[UNHANDLED]', error?.stack || error),
+);
 
 function safeStop(reason) {
   try {
