@@ -1,8 +1,13 @@
+import { setDefaultResultOrder } from 'node:dns';
 import 'dotenv/config';
 import express from 'express';
 import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
 import { adjustPayoutCents } from '../util/pricing.js';
+
+try {
+  setDefaultResultOrder('ipv4first');
+} catch {}
 
 function isAdmin(req) {
   const t = (req.query.admin_token || req.get('X-Admin-Token') || '').trim();

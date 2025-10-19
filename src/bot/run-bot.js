@@ -1,5 +1,10 @@
+import { setDefaultResultOrder } from 'node:dns';
 import 'dotenv/config';
 import { bot } from './telegraf.js';
+
+try {
+  setDefaultResultOrder('ipv4first');
+} catch {}
 
 const username = process.env.BOT_USERNAME ? `@${process.env.BOT_USERNAME}` : 'bot';
 console.log(`[bot] Webhook mode active for ${username}.`);
