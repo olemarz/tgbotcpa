@@ -112,7 +112,10 @@ bot.command('offer_status', async (ctx) => {
   const m = (ctx.message?.text || '').match(
     /^\/offer_status\s+([0-9a-f-]{36})\s+(active|paused|stopped|draft)$/i,
   );
-  if (!m) return ctx.reply('Формат: /offer_status <UUID> <active|paused|stopped|draft>');
+  if (!m) {
+    await replyHtml(ctx, 'Формат: /offer_status <UUID> <active|paused|stopped|draft>');
+    return;
+  }
   const [, id, st] = m;
   const r = await query(
     `UPDATE offers SET status=$2 WHERE id=$1 RETURNING id,status`,
@@ -355,10 +358,8 @@ bot.start(async (ctx) => {
 
   await replyHtml(
     ctx,
-    [
-      'Это <code>/start</code> без параметра кампании. Пришлите токен командой:',
+    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:\n' +
       '<code>/claim &lt;TOKEN&gt;</code>',
-    ].join('\n'),
   );
 });
 

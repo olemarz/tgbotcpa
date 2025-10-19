@@ -265,12 +265,10 @@ async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
   await replyHtml(
     ctx,
-    [
-      `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.`,
-      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.',
-      'Пусто или 0 — без ограничений.',
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
+      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.\n' +
+      'Пусто или 0 — без ограничений.\n' +
       'Команды: [Назад], [Отмена].',
-    ].join('\n'),
   );
 }
 async function promptOfferName(ctx) {
@@ -291,12 +289,10 @@ async function promptOfferSlug(ctx) {
   const auto = ctx.wizard.state.autoSlug || '—';
   await replyHtml(
     ctx,
-    [
-      `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.`,
-      'Если хотите оставить — отправьте «ок» «ok» (или «согласен»).',
-      'Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.',
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.\n` +
+      'Если хотите оставить — отправьте «ок» «ok» (или «согласен»).\n' +
+      'Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.\n' +
       'Команды: [Назад], [Отмена].',
-    ].join('\n'),
   );
 }
 
@@ -470,12 +466,10 @@ async function step5(ctx) {
 async function promptGeoTargeting(ctx) {
   await replyHtml(
     ctx,
-    [
-      'Шаг 6/8. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.',
-      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.',
-      'Пусто или 0 — без ограничений.',
+    'Шаг 6/8. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n' +
+      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.\n' +
+      'Пусто или 0 — без ограничений.\n' +
       'Команды: [Назад], [Отмена].',
-    ].join('\n'),
   );
 }
 
