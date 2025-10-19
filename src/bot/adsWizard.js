@@ -722,6 +722,34 @@ export const adsWizardScene = new Scenes.WizardScene(
 
 adsWizardScene.enter(initializeWizardState);
 
+adsWizardScene.command('ads', async (ctx) => {
+  const reenter = ctx.scene && typeof ctx.scene.reenter === 'function' ? ctx.scene.reenter.bind(ctx.scene) : null;
+  if (!reenter) {
+    console.error('[adsWizard] /ads inside wizard without scene context');
+    return;
+  }
+
+  try {
+    if (ctx.wizard && typeof ctx.wizard === 'object') {
+      ctx.wizard.state = {};
+    }
+    if (ctx.scene && typeof ctx.scene === 'object') {
+      const baseState = ctx.scene.state && typeof ctx.scene.state === 'object' ? { ...ctx.scene.state } : {};
+      delete baseState.offer;
+      delete baseState.skipUpdate;
+      ctx.scene.state = baseState;
+    }
+    await reenter();
+  } catch (error) {
+    console.error('[adsWizard] failed to reenter on /ads', error?.message || error);
+    try {
+      await ctx.reply('⚠️ Не удалось перезапустить мастер. Попробуйте ещё раз.');
+    } catch (replyError) {
+      console.error('[adsWizard] failed to notify about reenter error', replyError?.message || replyError);
+    }
+  }
+});
+
 export const initializeAdsWizard = initializeWizardState;
 
 export const startAdsWizard = (ctx, init = {}) =>
