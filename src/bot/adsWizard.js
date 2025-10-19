@@ -258,17 +258,10 @@ async function promptCapsTotal(ctx) {
   const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ ${MIN_QTY}).\n` +
-    'Команды: [Назад], [Отмена].'
+    'Команды: [Назад], [Отмена].'  `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
   );
 }
-async function promptGeoTargeting(ctx) {
-  const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
-  await replyHtml(
-    ctx,
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
-    `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
-  );
-}
+
 async function promptOfferName(ctx) {
   const stepNum = STEP_NUMBERS[Step.OFFER_NAME];
   await ctx.reply(`Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите название оффера.\nКоманды: [Назад], [Отмена].`);
