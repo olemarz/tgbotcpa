@@ -1,38 +1,26 @@
-// src/bot/html.js
-// Единый безопасный HTML-рендер под ограничения Telegram.
-// Без сторонних зависимостей.
-
-const ALLOWED = /<(?:\/?(?:b|strong|i|em|u|s|strike|del|a|code|pre|br)\b[^>]*)>/gi;
+// Единый безопасный HTML-рендер под Telegram, без внешних зависимостей.
+const WL = /<(?:\/?(?:b|strong|i|em|u|s|strike|del|a|code|pre|br)\b[^>]*)>/gi;
 
 export function sanitizeTelegramHtml(input) {
   if (!input) return '';
   let s = String(input);
 
-  // Превращаем переводы строк в <br> (удобнее писать \n в коде)
+  // \n → <br>
   s = s.replace(/\r?\n/g, '<br>');
 
-  // Экранируем спецсимволы
-  s = s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  // экранирование
+  s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // Возвращаем допустимые теги (упрощённый подход: только whitelist)
+  // вернуть whitelist-теги
   s = s.replace(/&lt;(\/?(?:b|strong|i|em|u|s|strike|del|a|code|pre|br)\b[^&]*)&gt;/gi, '<$1>');
 
-  // Чистим вложенность <br> (2+ в ряд → 2)
+  // максимум два переноса подряд
   s = s.replace(/(?:<br>\s*){3,}/g, '<br><br>');
 
   return s;
 }
 
 export async function replyHtml(ctx, html, extra = {}) {
-  const input = Array.isArray(html) ? html.join('\n') : html;
-  const safe = sanitizeTelegramHtml(input);
-  const options = {
-    parse_mode: 'HTML',
-    disable_web_page_preview: true,
-    ...extra
-  };
-  return ctx.reply(safe, options);
+  const safe = sanitizeTelegramHtml(html);
+  return ctx.reply(safe, { parse_mode: 'HTML', disable_web_page_preview: true, ...extra });
 }
