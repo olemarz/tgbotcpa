@@ -1,3 +1,4 @@
+import https from 'node:https';
 import 'dotenv/config';
 import { Telegraf, Scenes, session } from 'telegraf';
 
@@ -11,6 +12,7 @@ import { centsToXtr } from '../util/xtr.js';
 import { registerStatHandlers } from './stat.js';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
+import { ensureBotSelf } from './self.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -20,7 +22,18 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-export const bot = new Telegraf(BOT_TOKEN);
+const agent = new https.Agent({
+  keepAlive: true,
+  timeout: 15000,
+});
+
+export const bot = new Telegraf(BOT_TOKEN, {
+  telegram: {
+    agent,
+  },
+});
+
+await ensureBotSelf(bot);
 
 // сцены
 const stage = new Scenes.Stage([adsWizardScene]);
