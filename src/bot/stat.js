@@ -1,4 +1,5 @@
 import { query } from '../db/index.js';
+import { replyHtml, sanitizeTelegramHtml } from './html.js';
 
 export const STAT_CALLBACK_PREFIX = 'stat:';
 const STAT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -315,16 +316,21 @@ async function respondWithStats(ctx, dateKey, { isCallback } = {}) {
   const statsRows = await fetchStatsForOffers(offers, dateKey);
   const text = buildStatsMessage(dateKey, statsRows);
   const replyMarkup = buildStatKeyboard(dateKey);
+  const safe = sanitizeTelegramHtml(text);
 
   if (isCallback) {
     try {
-      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: replyMarkup });
+      await ctx.editMessageText(safe, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: replyMarkup,
+      });
     } catch (error) {
       if (error?.description !== 'Bad Request: message is not modified') throw error;
     }
     await ctx.answerCbQuery();
   } else {
-    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: replyMarkup });
+    await replyHtml(ctx, text, { reply_markup: replyMarkup });
   }
 }
 

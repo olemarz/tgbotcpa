@@ -9,6 +9,7 @@ import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
 import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
+import { replyHtml } from './html.js';
 
 const logPrefix = '[adsWizard]';
 
@@ -262,15 +263,15 @@ async function promptCapsTotal(ctx) {
 }
 async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
-await replyHtml(
-  ctx,
-  [
-    'Шаг 6/8. Введите GEO. Пример: RU,UA,KZ (ISO2-коды, через запятую/пробел).',
-    '⚠️ Внимание: при включении гео-таргетинга стоимость целевого действия увеличивается на <b>30%</b> и округляется вверх.',
-    'Пусто или 0 — без гео-ограничений.',
-    'Команды: [Назад], [Отмена].',
-  ].join('\n'),
-);
+  await replyHtml(
+    ctx,
+    [
+      `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.`,
+      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.',
+      'Пусто или 0 — без ограничений.',
+      'Команды: [Назад], [Отмена].',
+    ].join('\n'),
+  );
 }
 async function promptOfferName(ctx) {
   const stepNum = STEP_NUMBERS[Step.OFFER_NAME];
@@ -288,11 +289,14 @@ async function promptOfferSlug(ctx) {
     ctx.wizard.state.autoSlug = makeSlug(`offer-${Date.now()}`) || `offer-${Date.now()}`;
   }
   const auto = ctx.wizard.state.autoSlug || '—';
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.\n` +
-    `Если хотите оставить — отправьте «ок» «ok» (или «согласен»). Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.\n` +
-    'Команды: [Назад], [Отмена].',
-    { parse_mode: 'HTML' }
+  await replyHtml(
+    ctx,
+    [
+      `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.`,
+      'Если хотите оставить — отправьте «ок» «ok» (или «согласен»).',
+      'Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.',
+      'Команды: [Назад], [Отмена].',
+    ].join('\n'),
   );
 }
 
@@ -464,14 +468,15 @@ async function step5(ctx) {
 
 // ПОДСКАЗКА ДЛЯ GEO (вызывается при входе в шаг)
 async function promptGeoTargeting(ctx) {
-  const msg = [
-    'Шаг 6/8. Введите GEO. Пример: RU, UA, KZ (ISO2-коды, через запятую или пробел).',
-    '⚠️ При включении гео-таргетинга стоимость действия ↑ на <b>30%</b> (округление вверх).',
-    'Оставьте пусто или введите 0 — будет <b>без гео-ограничений</b>.',
-    'Команды: [Назад], [Отмена].'
-  ].join('\n');
-
-  await ctx.replyWithHTML(msg);
+  await replyHtml(
+    ctx,
+    [
+      'Шаг 6/8. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.',
+      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.',
+      'Пусто или 0 — без ограничений.',
+      'Команды: [Назад], [Отмена].',
+    ].join('\n'),
+  );
 }
 
 // ШАГ 6 — ввод GEO
