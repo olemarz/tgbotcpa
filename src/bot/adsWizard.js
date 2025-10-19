@@ -208,7 +208,7 @@ async function goToStep(ctx, step) {
       await promptCapsTotal(ctx);
       break;
     case Step.GEO_TARGETING:
-      await promptGeoTargeting_old(ctx);
+      await promptGeoTargeting(ctx);
       break;
     case Step.OFFER_NAME:
       await promptOfferName(ctx);
@@ -265,12 +265,8 @@ async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
   await replyHtml(
     ctx,
-    [
-      `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.`,
-      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.',
-      'Пусто или 0 — без ограничений.',
-      'Команды: [Назад], [Отмена].',
-    ].join('\n'),
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
+    `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
   );
 }
 async function promptOfferName(ctx) {
@@ -466,15 +462,12 @@ async function step5(ctx) {
 }
 
 // ПОДСКАЗКА ДЛЯ GEO (вызывается при входе в шаг)
-async function promptGeoTargeting_old(ctx) {
+async function promptGeoTargeting(ctx) {
+  const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
   await replyHtml(
     ctx,
-    [
-      'Шаг 6/8. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.',
-      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.',
-      'Пусто или 0 — без ограничений.',
-      'Команды: [Назад], [Отмена].',
-    ].join('\n'),
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
+    `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
   );
 }
 
