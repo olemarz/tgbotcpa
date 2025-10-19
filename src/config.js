@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 const DEFAULT_MIN_RATES = {
-  join_group: { base: 5, premium: 10 },
+  join_group: { base: 2, premium: 5 },
   forward: { base: 2, premium: 7 },
   reaction: { base: 1, premium: 5 },
   comment: { base: 3, premium: 10 },
@@ -59,7 +59,7 @@ export function buildConfig(env = process.env) {
   const cpaPostbackUrlRaw = trim(env.CPA_POSTBACK_URL ?? env.CPA_PB_URL ?? '');
   const cpaApiKey = trim(env.CPA_API_KEY) || '';
 
-  const port = Number.parseInt(trim(env.PORT) || '3000', 10);
+  const port = Number.parseInt(trim(env.PORT) || '8000', 10);
   if (Number.isNaN(port)) {
     throw new Error(`Environment variable PORT must be a number. Received: ${env.PORT}`);
   }

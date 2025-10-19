@@ -1,6 +1,7 @@
 import { setDefaultResultOrder } from 'node:dns';
 import 'dotenv/config';
 import express from 'express';
+import config from '../config.js';
 import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
 import { adjustPayoutCents } from '../util/pricing.js';
