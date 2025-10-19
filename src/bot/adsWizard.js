@@ -266,9 +266,7 @@ async function promptGeoTargeting(ctx) {
   await replyHtml(
     ctx,
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
-      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.\n' +
-      'Пусто или 0 — без ограничений.\n' +
-      'Команды: [Назад], [Отмена].',
+      '⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.',
   );
 }
 async function promptOfferName(ctx) {
@@ -345,7 +343,7 @@ async function finishAndSend(ctx, offerId) {
   }
 }
 
-/ ====================== STEPS: 1..8 + promptGeoTargeting ======================
+// ====================== STEPS: 1..8 + promptGeoTargeting ======================
 
 // ШАГ 1 — целевой URL (канал/группа/бот/пост)
 async function step1(ctx) {
@@ -460,17 +458,6 @@ async function step5(ctx) {
     await ctx.reply(`Минимальный лимит конверсий — ${minCap}. Я установил количество: ${qty}.`);
   }
   await goToStep(ctx, Step.GEO_TARGETING);
-}
-
-// ПОДСКАЗКА ДЛЯ GEO (вызывается при входе в шаг)
-async function promptGeoTargeting(ctx) {
-  await replyHtml(
-    ctx,
-    'Шаг 6/8. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n' +
-      '⚠️ Таргетинг по дорогим GEO увеличивает стоимость ~на 30%.\n' +
-      'Пусто или 0 — без ограничений.\n' +
-      'Команды: [Назад], [Отмена].',
-  );
 }
 
 // ШАГ 6 — ввод GEO
