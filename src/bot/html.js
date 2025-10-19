@@ -21,6 +21,6 @@ export function sanitizeTelegramHtml(input) {
 }
 
 export async function replyHtml(ctx, html, extra = {}) {
-  const safe = sanitizeTelegramHtml(html);
+  const safe = sanitizeTelegramHtml(String(html));
   return ctx.reply(safe, { parse_mode: 'HTML', disable_web_page_preview: true, ...extra });
 }
