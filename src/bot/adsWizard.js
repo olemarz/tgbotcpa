@@ -349,7 +349,7 @@ async function finishAndSend(ctx, offerId) {
   }
 }
 
-/ ====================== STEPS: 1..8 + promptGeoTargeting ======================
+ ====================== STEPS: 1..8 + promptGeoTargeting ======================
 
 // ШАГ 1 — целевой URL (канал/группа/бот/пост)
 async function step1(ctx) {
