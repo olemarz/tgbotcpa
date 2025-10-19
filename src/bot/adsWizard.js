@@ -163,11 +163,171 @@ function isBack(ctx) { const t = getMessageText(ctx); return !!t && BACK_KEYWORD
 async function cancelWizard(ctx, msg='Мастер отменён.') { await ctx.reply(msg); return ctx.scene.leave(); }
 
 function normalizeTelegramUrl(raw) {
+  if (!raw) return null;
+  let input = raw.trim();
+  if (!input) return null;
+
+  if (!/^[a-z]+:\/\//i.test(input)) {
+    input = `https://${input}`;
+  }
+
   try {
-    const u = new URL(raw.trim());
-    if (!allowedTelegramHosts.has(u.hostname)) return null;
-    return u.toString();
-  } catch { return null; }
+    const url = new URL(input);
+    if (!allowedTelegramHosts.has(url.hostname)) return null;
+
+    url.protocol = 'https:';
+    url.hostname = 't.me';
+
+    if (!url.pathname || url.pathname === '/') {
+      return null;
+    }
+
+    const segments = url.pathname
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    if (!segments.length) {
+      return null;
+    }
+
+    url.pathname = `/${segments.join('/')}`;
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function parseTelegramEntity(urlString) {
+  try {
+    const url = new URL(urlString);
+    const segments = url.pathname
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    if (!segments.length) return null;
+
+    if (segments[0] === 's' && segments.length > 1) {
+      segments.shift();
+    }
+
+    if (!segments.length) return null;
+
+    if (segments[0] === 'c' && /^\d+$/.test(segments[1] || '')) {
+      const chatId = `-100${segments[1]}`;
+      const messageId = /^\d+$/.test(segments[2] || '') ? Number(segments[2]) : null;
+      return { type: 'chat_id', identifier: chatId, messageId };
+    }
+
+    const first = segments[0];
+    if (!first) return null;
+
+    if (first.startsWith('+')) {
+      return { type: 'invite', identifier: first };
+    }
+
+    const username = first.replace(/^@+/, '');
+    if (!username) return null;
+
+    const messageId = /^\d+$/.test(segments[1] || '') ? Number(segments[1]) : null;
+
+    return { type: 'username', identifier: `@${username}`, username, messageId };
+  } catch {
+    return null;
+  }
+}
+
+function isNotFoundTelegramError(error) {
+  if (!error || typeof error !== 'object') return false;
+  const code = error.response?.error_code;
+  const description = String(error.response?.description || '').toLowerCase();
+  if (code !== 400) return false;
+  return (
+    description.includes('not found') ||
+    description.includes('invalid invite link') ||
+    description.includes('username not occupied')
+  );
+}
+
+function isAccessRestrictedTelegramError(error) {
+  if (!error || typeof error !== 'object') return false;
+  const code = error.response?.error_code;
+  if (code === 403 || code === 401) return true;
+  const description = String(error.response?.description || '').toLowerCase();
+  return description.includes('blocked') || description.includes('not enough rights');
+}
+
+async function ensureTelegramEntityExists(ctx, normalizedUrl) {
+  if (!ctx?.telegram || typeof ctx.telegram.callApi !== 'function') {
+    return true;
+  }
+
+  const parsed = parseTelegramEntity(normalizedUrl);
+  if (!parsed) return false;
+
+  if (parsed.type === 'invite') {
+    try {
+      await ctx.telegram.callApi('checkChatInviteLink', { invite_link: normalizedUrl });
+      return true;
+    } catch (error) {
+      if (isNotFoundTelegramError(error)) return false;
+      if (isAccessRestrictedTelegramError(error)) return true;
+      console.error(`${logPrefix} invite verification failed`, error?.message || error);
+      return true;
+    }
+  }
+
+  const targets = [];
+
+  if (parsed.identifier) targets.push(parsed.identifier);
+
+  let hadUnknownError = false;
+  let hadNotFound = false;
+
+  for (const target of targets) {
+    try {
+      await ctx.telegram.callApi('getChat', { chat_id: target });
+      return true;
+    } catch (error) {
+      if (isAccessRestrictedTelegramError(error)) {
+        return true;
+      }
+
+      if (isNotFoundTelegramError(error)) {
+        hadNotFound = true;
+        continue;
+      }
+
+      console.error(`${logPrefix} chat verification error`, {
+        target,
+        error: error?.response?.description || error?.message || String(error),
+      });
+      hadUnknownError = true;
+    }
+  }
+
+  if (parsed.username) {
+    try {
+      await ctx.telegram.callApi('searchPublicChat', { username: parsed.username });
+      return true;
+    } catch (error) {
+      if (isNotFoundTelegramError(error)) return false;
+      if (isAccessRestrictedTelegramError(error)) return true;
+      console.error(`${logPrefix} searchPublicChat failed`, {
+        username: parsed.username,
+        error: error?.response?.description || error?.message || String(error),
+      });
+      hadUnknownError = true;
+    }
+  }
+
+  if (hadUnknownError && !hadNotFound) {
+    return true;
+  }
+
+  return false;
 }
 
 function initializeWizardState(ctx) {
@@ -230,10 +390,12 @@ async function goToStep(ctx, step) {
 
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Пришлите ссылку на канал/группу/бота в формате https://t.me/...\n` +
-    'Команды: [Отмена] — выйти из мастера.'
-  );
+  const lines = [
+    'Введите ссылку на объект для рекламы в формате https://t.me/ваш_объект_для_рекламы.',
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Пришлите ссылку на канал/группу/бота в формате https://t.me/...`,
+    'Команды: [Отмена] — выйти из мастера.',
+  ];
+  await ctx.reply(lines.join('\n'));
 }
 function buildEventKeyboard() {
   const rows = EVENT_ORDER.map((type) => [Markup.button.callback(eventLabels[type] || type, `event:${type}`)]);
@@ -446,6 +608,15 @@ async function step1(ctx) {
       return;
     }
 
+    const exists = await ensureTelegramEntityExists(ctx, normalized);
+    if (!exists) {
+      await ctx.reply(
+        'объект для рекламы не найдем, пожалуйста, введите существующую группу/канал/бота/миниапп или пост либо обратитесь к администратору'
+      );
+      return;
+    }
+
+    ctx.wizard.state.offer.raw_target_url = text;
     ctx.wizard.state.offer.target_url = normalized;
     await goToStep(ctx, Step.EVENT_TYPE);
   } catch (e) {
