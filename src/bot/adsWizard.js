@@ -261,12 +261,79 @@ async function promptCapsTotal(ctx) {
     'Команды: [Назад], [Отмена].'
   );
 }
+async function handleCapsTotalInput(ctx) {
+  try {
+    if (!ctx.message || typeof ctx.message.text !== 'string') {
+      await promptCapsTotal(ctx);
+      return;
+    }
+
+    const raw = ctx.message.text.trim();
+    const qtyRaw = Number(raw.replace(',', '.'));
+    const effectiveMin = Math.max(minCap, MIN_QTY);
+
+    if (!Number.isFinite(qtyRaw) || !Number.isInteger(qtyRaw)) {
+      await ctx.reply(`Введите целое число (минимум ${effectiveMin}).`);
+      return;
+    }
+
+    const qtyTrunc = Math.trunc(qtyRaw);
+
+    const qty = Math.max(effectiveMin, qtyTrunc);
+    ctx.wizard.state.offer = ctx.wizard.state.offer || {};
+    ctx.wizard.state.offer.caps_total = qty;
+    ctx.wizard.state.offer.quantity = qty;
+
+    if (qtyTrunc < MIN_QTY) {
+      await ctx.reply(`Минимум ЦД — ${MIN_QTY}. Я установил: ${qty}.`);
+    } else if (qtyTrunc < effectiveMin) {
+      await ctx.reply(`Минимальный лимит конверсий — ${effectiveMin}. Я установил: ${qty}.`);
+    } else {
+      await ctx.reply(`Принял. Лимит конверсий: ${qty}.`);
+    }
+
+    let advanced = false;
+
+    if (typeof goToStep === 'function') {
+      try {
+        await goToStep(ctx, Step.GEO_TARGETING);
+        advanced = true;
+      } catch (goToStepError) {
+        console.error('[WIZARD] step5->GEO goToStep error:', goToStepError);
+      }
+    }
+
+    if (!advanced) {
+      await promptGeoTargeting(ctx);
+      if (ctx.wizard && typeof ctx.wizard.selectStep === 'function') {
+        const i = STEP_NUMBERS[Step.GEO_TARGETING] - 1;
+        ctx.wizard.selectStep(i);
+        advanced = true;
+      } else if (ctx.wizard && typeof ctx.wizard.next === 'function') {
+        await ctx.wizard.next();
+        advanced = true;
+      }
+    }
+
+    if (!advanced) {
+      throw new Error('Не удалось перейти к шагу GEO.');
+    }
+  } catch (err) {
+    console.error('[WIZARD] step5->GEO transition error:', err);
+    try {
+      await replyHtml(
+        ctx,
+        '⚠️ Произошла ошибка при переходе к шагу GEO. Нажмите <b>/ads</b> и начните заново — я сохранил введённые значения.'
+      );
+    } catch {}
+  }
+}
 async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
   await replyHtml(
     ctx,
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
-      '⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.',
+    `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
   );
 }
 async function promptOfferName(ctx) {
@@ -434,30 +501,7 @@ async function step5(ctx) {
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.PREMIUM_RATE); return; }
 
-  const raw = String(getMessageText(ctx) ?? '').trim();
-  const qtyRaw = Number(raw.replace(',', '.'));
-  const effectiveMin = Math.max(minCap, MIN_QTY);
-
-  if (!Number.isFinite(qtyRaw)) { await ctx.reply(`Введите целое число, не меньше ${effectiveMin}.`); return; }
-
-  const qtyTrunc = Math.trunc(qtyRaw);
-
-  if (!Number.isInteger(qtyRaw)) { await ctx.reply('Лимит должен быть целым числом.'); return; }
-  if (qtyTrunc <= 0) {
-    await ctx.reply(`Минимальный лимит конверсий — ${effectiveMin}. 0 (без ограничений) не допускается.`);
-    return;
-  }
-
-  const qty = Math.max(effectiveMin, qtyTrunc);
-  ctx.wizard.state.offer.quantity = qty;
-  ctx.wizard.state.offer.caps_total = qty;
-
-  if (qtyRaw < MIN_QTY) {
-    await ctx.reply(`Минимум ЦД — ${MIN_QTY}. Я установил количество: ${qty}.`);
-  } else if (qtyTrunc < minCap) {
-    await ctx.reply(`Минимальный лимит конверсий — ${minCap}. Я установил количество: ${qty}.`);
-  }
-  await goToStep(ctx, Step.GEO_TARGETING);
+  await handleCapsTotalInput(ctx);
 }
 
 // ШАГ 6 — ввод GEO
