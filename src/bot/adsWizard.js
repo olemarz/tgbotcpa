@@ -240,25 +240,26 @@ async function promptEventType(ctx) {
 }
 async function promptBaseRate(ctx) {
   const { event_type: eventType } = ctx.wizard.state.offer;
-  const min = minRates[eventType]?.base ?? 0;
+  const min = (minRates[eventType]?.base ?? 0);
   const stepNum = STEP_NUMBERS[Step.BASE_RATE];
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите базовую ставку, не ниже ${min}.\n` +
-    'Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].'
+    `Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].`
   );
 }
 async function promptPremiumRate(ctx) {
   const stepNum = STEP_NUMBERS[Step.PREMIUM_RATE];
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей.\n` +
-    'Она не может быть ниже базовой ставки или минимального порога для премиума. Команды: [Назад], [Отмена].'
+    `Она не может быть ниже базовой ставки или минимального порога для премиума. Команды: [Назад], [Отмена].`
   );
 }
 async function promptCapsTotal(ctx) {
   const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
+  const MIN_QTY = 25;
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ ${MIN_QTY}).\n` +
-    'Команды: [Назад], [Отмена].'  `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
+    `Команды: [Назад], [Отмена].`
   );
 }
 
