@@ -32,6 +32,9 @@ const minRates = config.MIN_RATES || {};
 const minCap = config.MIN_CAP ?? DEFAULT_MIN_CAP;
 const allowedTelegramHosts = new Set(['t.me', 'telegram.me', 'telegram.dog']);
 
+const OK_WORDS = new Set(['ok', 'okay', 'okey', 'ок', 'окей', 'согласен', 'согласна', 'оставить']);
+const MIN_QTY = 25;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const linksLogPath = path.resolve(__dirname, '../../var/links.log');
@@ -99,6 +102,16 @@ async function slugExists(slug) {
   const res = await query('SELECT 1 FROM offers WHERE slug = $1 LIMIT 1', [slug]);
   return res.rowCount > 0;
 }
+function makeSlug(input) {
+  return String(input ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
 function slugify(name) {
   const base = (name || '')
     .toLowerCase()
@@ -119,6 +132,14 @@ async function ensureUniqueSlug(base) {
     counter += 1;
   }
   return slug;
+}
+function autoSlugFromOffer(offer = {}) {
+  const source = offer && typeof offer === 'object' ? offer : {};
+  const eventSlug = makeSlug(source.event_type || '');
+  const quantityRaw = source.quantity ?? source.caps_total;
+  const quantity = Number.isFinite(Number(quantityRaw)) ? Math.trunc(Number(quantityRaw)) : null;
+  const parts = [eventSlug, quantity && quantity > 0 ? String(quantity) : null].filter(Boolean);
+  return makeSlug(parts.join('-'));
 }
 function parseNumber(text) {
   if (!text) return null;
@@ -235,7 +256,7 @@ async function promptPremiumRate(ctx) {
 async function promptCapsTotal(ctx) {
   const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
   await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ 25).\n` +
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ ${MIN_QTY}).\n` +
     'Команды: [Назад], [Отмена].'
   );
 }
@@ -257,9 +278,16 @@ async function promptOfferName(ctx) {
 }
 async function promptOfferSlug(ctx) {
   const stepNum = STEP_NUMBERS[Step.OFFER_SLUG];
-  const { title } = ctx.wizard.state.offer;
-  const auto = slugify(title || '');
-  ctx.wizard.state.autoSlug = auto;
+  const offer = ctx.wizard.state.offer || {};
+  ctx.wizard.state.autoSlug = ctx.wizard.state.autoSlug || autoSlugFromOffer(offer);
+  const titleSlug = makeSlug(offer.title || offer.name || '');
+  if (!ctx.wizard.state.autoSlug && titleSlug) {
+    ctx.wizard.state.autoSlug = titleSlug;
+  }
+  if (!ctx.wizard.state.autoSlug) {
+    ctx.wizard.state.autoSlug = makeSlug(`offer-${Date.now()}`) || `offer-${Date.now()}`;
+  }
+  const auto = ctx.wizard.state.autoSlug || '—';
   await ctx.reply(
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Текущий slug: <code>${auto}</code>.\n` +
     `Если хотите оставить — отправьте «ок» «ok» (или «согласен»). Если нужен свой slug (латиница/цифры/дефис, до 60 символов) — пришлите его.\n` +
@@ -409,13 +437,28 @@ async function step5(ctx) {
   if (isBack(ctx)) { await goToStep(ctx, Step.PREMIUM_RATE); return; }
 
   const raw = String(getMessageText(ctx) ?? '').trim();
-  const value = Number(raw.replace(',', '.'));
+  const qtyRaw = Number(raw.replace(',', '.'));
+  const effectiveMin = Math.max(minCap, MIN_QTY);
 
-  if (!Number.isFinite(value)) { await ctx.reply(`Введите целое число, не меньше ${minCap}.`); return; }
-  if (value < minCap)          { await ctx.reply(`Минимальный лимит конверсий — ${minCap}. 0 (без ограничений) не допускается.`); return; }
-  if (!Number.isInteger(value)){ await ctx.reply('Лимит должен быть целым числом.'); return; }
+  if (!Number.isFinite(qtyRaw)) { await ctx.reply(`Введите целое число, не меньше ${effectiveMin}.`); return; }
 
-  ctx.wizard.state.offer.caps_total = value;
+  const qtyTrunc = Math.trunc(qtyRaw);
+
+  if (!Number.isInteger(qtyRaw)) { await ctx.reply('Лимит должен быть целым числом.'); return; }
+  if (qtyTrunc <= 0) {
+    await ctx.reply(`Минимальный лимит конверсий — ${effectiveMin}. 0 (без ограничений) не допускается.`);
+    return;
+  }
+
+  const qty = Math.max(effectiveMin, qtyTrunc);
+  ctx.wizard.state.offer.quantity = qty;
+  ctx.wizard.state.offer.caps_total = qty;
+
+  if (qtyRaw < MIN_QTY) {
+    await ctx.reply(`Минимум ЦД — ${MIN_QTY}. Я установил количество: ${qty}.`);
+  } else if (qtyTrunc < minCap) {
+    await ctx.reply(`Минимальный лимит конверсий — ${minCap}. Я установил количество: ${qty}.`);
+  }
   await goToStep(ctx, Step.GEO_TARGETING);
 }
 
@@ -510,38 +553,48 @@ async function step8(ctx) {
   if (isCancel(ctx)) return cancelWizard(ctx);
   if (isBack(ctx)) { await goToStep(ctx, Step.OFFER_NAME); return; }
 
-  let raw = (getMessageText(ctx) || '').trim();
-  const cleaned = raw.replace(/[.,!…—-]+$/u, '').trim().toLowerCase();
+  const text = (ctx.message?.text || '').trim();
+  const stripped = text.replace(/[.,!…—-]+$/u, '').trim();
+  const lowered = text.toLowerCase();
+  const loweredStripped = stripped.toLowerCase();
+  const isKeepAuto = OK_WORDS.has(lowered) || OK_WORDS.has(loweredStripped);
 
-  const OK_WORDS = new Set(['-', 'ok', 'okay', 'okey', 'ок', 'окей', 'согласен', 'согласна', 'оставить']);
+  const offerState = ctx.wizard.state.offer || {};
+  ctx.wizard.state.autoSlug = ctx.wizard.state.autoSlug || autoSlugFromOffer(offerState);
 
-  const isKeepAuto = OK_WORDS.has(cleaned);
+  let candidate;
 
-  // ... здесь оставь свою дальнейшую логику генерации slug/подтверждения/сохранения
-  // Главное — везде, где переходишь по шагам, используй await:
-  // await goToStep(ctx, Step.NEXT_STEP);
+  if (isKeepAuto) {
+    const sources = [ctx.wizard.state.autoSlug, autoSlugFromOffer(offerState), `offer-${Date.now()}`];
+    for (const source of sources) {
+      const slug = makeSlug(source);
+      if (slug) {
+        candidate = slug;
+        break;
+      }
+    }
+    if (!candidate) {
+      candidate = makeSlug(`offer-${Date.now()}`) || `offer-${Date.now()}`;
+    }
+  } else {
+    const slug = makeSlug(stripped || text);
+    if (!slug) {
+      await ctx.reply('Slug пуст или некорректен. Пришлите другой.');
+      return;
+    }
+    candidate = slug;
+  }
+
+  const unique = await ensureUniqueSlug(candidate);
+  ctx.wizard.state.offer.slug = unique;
+  ctx.wizard.state.autoSlug = unique;
+
+  await finalizeWizardAfterSlug(ctx, unique);
 }
 
 // ====================== END STEPS ======================
 
-// если пользователь подтвердил — берём autoSlug, иначе — то, что ввёл
-let candidate = isKeepAuto ? (ctx.wizard.state.autoSlug || '') : raw;
-
-
- if (candidate === '-' || candidate === '') {
-    candidate = ctx.wizard.state.autoSlug || '';
-  } else {
-    candidate = slugify(candidate).slice(0, 60);
-  }
-
-  if (!candidate) { await ctx.reply('Slug пуст или некорректен. Пришлите другой.'); return; }
-  const unique = await ensureUniqueSlug(candidate);
-  ctx.wizard.state.offer.slug = unique;
-
-await finalizeOfferAndInvoiceStars(ctx, ctx.wizard.state.offer || {});
-try { await ctx.scene.leave(); } catch {}
-return;
-
+async function finalizeWizardAfterSlug(ctx, unique) {
   const offerState = ctx.wizard.state.offer || {};
   const baseRateRaw = Number.isFinite(Number(offerState.base_rate)) ? Number(offerState.base_rate) : null;
   const premiumRateRaw = Number.isFinite(Number(offerState.premium_rate))
@@ -599,7 +652,6 @@ return;
   try {
     await ctx.scene.leave();
   } catch {}
-  return;
 }
 
 export const adsWizardScene = new Scenes.WizardScene(
