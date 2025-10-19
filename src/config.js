@@ -143,3 +143,4 @@ export function buildConfig(env = process.env) {
 }
 
 export const config = buildConfig(process.env);
+export default config;

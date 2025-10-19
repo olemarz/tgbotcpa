@@ -100,3 +100,4 @@ app.listen(PORT, BIND_HOST, () => {
   console.log(`[HTTP] listening on ${BIND_HOST}:${PORT}`);
   console.log(`[HTTP] webhook route => POST ${WEBHOOK_PATH}`);
 });
+export default app;
