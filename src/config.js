@@ -11,6 +11,14 @@ const DEFAULT_MIN_RATES = {
 
 const DEFAULT_ALLOWED_UPDATES = ['message', 'callback_query', 'chat_member', 'my_chat_member'];
 
+const GEO_MARKUP_JSON = (process.env.GEO_MARKUP_PERCENT_JSON || '').trim() || '{}';
+let GEO_MARKUP_MAP = {};
+try {
+  GEO_MARKUP_MAP = JSON.parse(GEO_MARKUP_JSON);
+} catch {
+  GEO_MARKUP_MAP = {};
+}
+
 export const MIN_CAP = 25;
 
 const trim = (value) => (typeof value === 'string' ? value.trim() : value);
@@ -139,6 +147,7 @@ export function buildConfig(env = process.env) {
     MIN_CAP,
     adsMasters,
     linkCaptureDisabled,
+    geoMarkupPercent: GEO_MARKUP_MAP,
   };
 }
 
