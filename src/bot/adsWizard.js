@@ -10,6 +10,7 @@ import { uuid } from '../util/id.js';
 import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
 import { replyHtml } from './html.js';
+import { quoteOffer } from '../utils/pricing.js';
 
 const logPrefix = '[adsWizard]';
 
@@ -643,36 +644,44 @@ async function step8(ctx) {
 
 async function finalizeWizardAfterSlug(ctx, unique) {
   const offerState = ctx.wizard.state.offer || {};
-  const baseRateRaw = Number.isFinite(Number(offerState.base_rate)) ? Number(offerState.base_rate) : null;
-  const premiumRateRaw = Number.isFinite(Number(offerState.premium_rate))
-    ? Number(offerState.premium_rate)
-    : null;
 
-  let payoutCents = Number.isFinite(Number(offerState.payout_cents)) ? Number(offerState.payout_cents) : null;
-  if (!payoutCents && baseRateRaw != null) {
-    payoutCents = Math.round(baseRateRaw * 100);
-  }
-  if (!payoutCents && premiumRateRaw != null) {
-    payoutCents = Math.round(premiumRateRaw * 100);
-  }
+  // из мастера: базовая/премиум ставки задавались в "звёздах" (не в центах)
+  const baseRate = Number.isFinite(Number(offerState.base_rate)) ? Number(offerState.base_rate) : null;
+  const premiumRate = Number.isFinite(Number(offerState.premium_rate)) ? Number(offerState.premium_rate) : null;
+  const capsTotal = Number.isFinite(Number(offerState.caps_total)) ? Number(offerState.caps_total) : null;
 
-  const capsTotalRaw = Number.isFinite(Number(offerState.caps_total)) ? Number(offerState.caps_total) : null;
-  let budgetCents = Number.isFinite(Number(offerState.budget_cents))
-    ? Number(offerState.budget_cents)
-    : null;
-  if ((budgetCents == null || budgetCents <= 0) && payoutCents && capsTotalRaw && capsTotalRaw > 0) {
-    budgetCents = payoutCents * capsTotalRaw;
-  }
-  if (!budgetCents && payoutCents) {
-    budgetCents = payoutCents;
-  }
-
-  const geoValue = (() => {
+  // geo из любого из возможных полей
+  const geo = (() => {
     if (offerState.geo) return offerState.geo;
     if (offerState.geo_list) return offerState.geo_list;
     if (offerState.geo_input) return offerState.geo_input;
     return null;
   })();
+
+  // 1) Если payout_cents уже задан – уважаем его, но лучше пересчитать по geo
+  let payoutCents = Number.isFinite(Number(offerState.payout_cents)) ? Number(offerState.payout_cents) : null;
+  let budgetCents = Number.isFinite(Number(offerState.budget_cents)) ? Number(offerState.budget_cents) : null;
+
+  // 2) Рассчитываем корректную выплату и бюджет С УЧЁТОМ GEO (+округление вверх)
+  //    quoteOffer работает в "звёздах", здесь же переводим в "центы" (×100)
+  //    Если baseRate не задан, пробуем premiumRate; иначе, если payoutCents уже был – извлекаем из него.
+  let basis = baseRate ?? premiumRate ?? (payoutCents != null ? payoutCents / 100 : null);
+
+  if (basis != null) {
+    const q = quoteOffer(basis, capsTotal ?? 0, geo);
+    // q.payout, q.budget — в звёздах (целые)
+    payoutCents = q.payout * 100;
+    // если caps неизвестен — бюджет ставим = payout
+    budgetCents = (capsTotal && capsTotal > 0) ? q.budget * 100 : q.payout * 100;
+  } else {
+    // Fallback на старую логику, если совсем нет ставок
+    if (!payoutCents && baseRate != null) payoutCents = Math.round(baseRate * 100);
+    if (!payoutCents && premiumRate != null) payoutCents = Math.round(premiumRate * 100);
+    if ((budgetCents == null || budgetCents <= 0) && payoutCents && capsTotal && capsTotal > 0) {
+      budgetCents = payoutCents * capsTotal;
+    }
+    if (!budgetCents && payoutCents) budgetCents = payoutCents;
+  }
 
   const form = {
     title: offerState.title ?? offerState.name ?? null,
@@ -680,19 +689,16 @@ async function finalizeWizardAfterSlug(ctx, unique) {
     event_type: offerState.event_type,
     payout_cents: payoutCents ?? 0,
     budget_cents: budgetCents ?? (payoutCents ?? 0),
-    geo: geoValue,
+    geo,
     slug: unique,
-    base_rate_cents: baseRateRaw,
-    premium_rate_cents: premiumRateRaw,
-    caps_total: capsTotalRaw,
+    base_rate_cents: baseRate != null ? Math.round(baseRate * 100) : null,
+    premium_rate_cents: premiumRate != null ? Math.round(premiumRate * 100) : null,
+    caps_total: capsTotal,
     status: 'draft',
   };
 
-  if (ctx.session) {
-    ctx.session.form = form;
-  }
+  if (ctx.session) ctx.session.form = form;
 
-  // Выставляем счёт Stars и завершаем мастер
   let finalizeCtx = ctx;
   if (typeof ctx?.replyWithInvoice !== 'function') {
     const fallbackCtx = Object.create(ctx);
