@@ -208,7 +208,7 @@ async function goToStep(ctx, step) {
       await promptCapsTotal(ctx);
       break;
     case Step.GEO_TARGETING:
-      await promptGeoTargeting(ctx);
+      await promptGeoTargeting_old(ctx);
       break;
     case Step.OFFER_NAME:
       await promptOfferName(ctx);
@@ -349,7 +349,6 @@ async function finishAndSend(ctx, offerId) {
   }
 }
 
- ====================== STEPS: 1..8 + promptGeoTargeting ======================
 
 // ШАГ 1 — целевой URL (канал/группа/бот/пост)
 async function step1(ctx) {
@@ -467,7 +466,7 @@ async function step5(ctx) {
 }
 
 // ПОДСКАЗКА ДЛЯ GEO (вызывается при входе в шаг)
-async function promptGeoTargeting(ctx) {
+async function promptGeoTargeting_old(ctx) {
   await replyHtml(
     ctx,
     [
