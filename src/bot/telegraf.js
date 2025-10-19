@@ -13,6 +13,7 @@ import { registerStatHandlers } from './stat.js';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
+import { replyHtml } from './html.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -82,30 +83,6 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-// одна версия replyHtml (без дублей)
-// убираем <br>, оставляем поддерживаемые html-теги, остальное затираем
-function sanitizeTelegramHtml(input) {
-  let s = String(input);
-
-  // <br> -> \n
-  s = s.replace(/<br\s*\/?>/gi, '\n');
-
-  // выкидываем любые теги, кроме допустимых: b,strong,i,em,u,ins,s,strike,del,a,code,pre
-  s = s.replace(
-    /<(?!\/?(?:b|strong|i|em|u|ins|s|strike|del|a|code|pre)\b)[^>]*>/gi,
-    '',
-  );
-
-  return s;
-}
-
-async function replyHtml(ctx, html, extra = {}) {
-  const safe = Array.isArray(html)
-    ? html.map(sanitizeTelegramHtml).join('\n')
-    : sanitizeTelegramHtml(html);
-  return ctx.reply(safe, { parse_mode: 'HTML', ...extra });
-}
-
 function isAdminCtx(ctx) {
   const adminId = Number(process.env.ADMIN_TG_ID || 0);
   return adminId && ctx.from?.id && Number(ctx.from.id) === adminId;
@@ -127,7 +104,7 @@ bot.command('admin_offers', async (ctx) => {
       `• <code>${o.id}</code> — ${o.title || '(без названия)'} [${o.status}] ` +
       `бюджет ${(o.budget_cents / 100).toFixed(2)} ₽, оплачено ${(o.paid_cents / 100).toFixed(2)} ₽, payout ${(o.payout_cents / 100).toFixed(2)} ₽`,
   );
-  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+  await replyHtml(ctx, lines.join('\n'));
 });
 
 bot.command('offer_status', async (ctx) => {
@@ -376,10 +353,13 @@ bot.start(async (ctx) => {
     return;
   }
 
-  await replyHtml(ctx, [
-    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:',
-    '<code>/claim &lt;TOKEN&gt;</code>',
-  ]);
+  await replyHtml(
+    ctx,
+    [
+      'Это <code>/start</code> без параметра кампании. Пришлите токен командой:',
+      '<code>/claim &lt;TOKEN&gt;</code>',
+    ].join('\n'),
+  );
 });
 
 bot.command('ads', async (ctx) => {
