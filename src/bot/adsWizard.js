@@ -151,7 +151,12 @@ function parseNumber(text) {
   return Math.round(n * 100) / 100;
 }
 function formatRate(v) { return `${v} ₽`; }
-function getMessageText(ctx) { return ctx.message?.text?.trim(); }
+function getMessageText(ctx) {
+  const message = ctx.message ?? ctx.update?.message ?? null;
+  const text = message?.text ?? message?.caption ?? '';
+  if (typeof text !== 'string') return undefined;
+  return text.trim();
+}
 function isCancel(ctx) { const t = getMessageText(ctx); return !!t && CANCEL_KEYWORDS.has(t.toLowerCase()); }
 function isBack(ctx) { const t = getMessageText(ctx); return !!t && BACK_KEYWORDS.has(t.toLowerCase()); }
 async function cancelWizard(ctx, msg='Мастер отменён.') { await ctx.reply(msg); return ctx.scene.leave(); }
@@ -242,24 +247,27 @@ async function promptBaseRate(ctx) {
   const { event_type: eventType } = ctx.wizard.state.offer;
   const min = minRates[eventType]?.base ?? 0;
   const stepNum = STEP_NUMBERS[Step.BASE_RATE];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите базовую ставку, не ниже ${min}.\n` +
-    'Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].'
-  );
+  const lines = [
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите базовую ставку, не ниже ${min}.`,
+    'Можно использовать точку или запятую как разделитель. Команды: [Назад], [Отмена].',
+  ];
+  await ctx.reply(lines.join('\n'));
 }
 async function promptPremiumRate(ctx) {
   const stepNum = STEP_NUMBERS[Step.PREMIUM_RATE];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей.\n` +
-    'Она не может быть ниже базовой ставки или минимального порога для премиума. Команды: [Назад], [Отмена].'
-  );
+  const lines = [
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите ставку для премиум-пользователей.`,
+    'Она не может быть ниже базовой ставки или минимального порога для премиума. Команды: [Назад], [Отмена].',
+  ];
+  await ctx.reply(lines.join('\n'));
 }
 async function promptCapsTotal(ctx) {
   const stepNum = STEP_NUMBERS[Step.CAPS_TOTAL];
-  await ctx.reply(
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ ${MIN_QTY}).\n` +
-    'Команды: [Назад], [Отмена].'
-  );
+  const lines = [
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите общий лимит конверсий (целое число ≥ ${MIN_QTY}).`,
+    'Команды: [Назад], [Отмена].',
+  ];
+  await ctx.reply(lines.join('\n'));
 }
 async function handleCapsTotalInput(ctx) {
   try {
@@ -330,11 +338,11 @@ async function handleCapsTotalInput(ctx) {
 }
 async function promptGeoTargeting(ctx) {
   const stepNum = STEP_NUMBERS[Step.GEO_TARGETING];
-  await replyHtml(
-    ctx,
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.\n` +
-    `⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.`
-  );
+  const lines = [
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Введите GEO. Пример: <code>US,CA,DE</code> или <code>ANY</code>.`,
+    '⚠️ Таргетинг по дорогим GEO обычно увеличивает стоимость ~на 30%.',
+  ];
+  await replyHtml(ctx, lines.join('\n'));
 }
 async function promptOfferName(ctx) {
   const stepNum = STEP_NUMBERS[Step.OFFER_NAME];
@@ -426,6 +434,11 @@ async function step1(ctx) {
     if (isBack(ctx)) { await goToStep(ctx, Step.TARGET_URL); return; }
 
     const text = getMessageText(ctx);
+    if (!text || text.startsWith('/')) {
+      await promptTargetUrl(ctx);
+      return;
+    }
+
     const normalized = normalizeTelegramUrl(text || '');
     if (!normalized) {
       await ctx.reply('Ссылка вида https://t.me/... не распознана. Попробуйте ещё раз.');
@@ -573,6 +586,10 @@ async function step7(ctx) {
 
   ctx.wizard.state.offer.title = name;
   ctx.wizard.state.offer.name  = name;
+  const nameSlug = makeSlug(name);
+  if (nameSlug) {
+    ctx.wizard.state.autoSlug = nameSlug;
+  }
 
   await goToStep(ctx, Step.OFFER_SLUG);
 }
@@ -587,7 +604,7 @@ async function step8(ctx) {
   const stripped = text.replace(/[.,!…—-]+$/u, '').trim();
   const lowered = text.toLowerCase();
   const loweredStripped = stripped.toLowerCase();
-  const isKeepAuto = OK_WORDS.has(lowered) || OK_WORDS.has(loweredStripped);
+  const isKeepAuto = OK_WORDS.has(lowered) || OK_WORDS.has(loweredStripped) || !stripped;
 
   const offerState = ctx.wizard.state.offer || {};
   ctx.wizard.state.autoSlug = ctx.wizard.state.autoSlug || autoSlugFromOffer(offerState);
@@ -665,10 +682,8 @@ async function finalizeWizardAfterSlug(ctx, unique) {
     budget_cents: budgetCents ?? (payoutCents ?? 0),
     geo: geoValue,
     slug: unique,
-    base_rate_rub: baseRateRaw,
-    base_rate_cents: baseRateRaw != null ? Math.round(baseRateRaw * 100) : null,
-    premium_rate_rub: premiumRateRaw,
-    premium_rate_cents: premiumRateRaw != null ? Math.round(premiumRateRaw * 100) : null,
+    base_rate_cents: baseRateRaw,
+    premium_rate_cents: premiumRateRaw,
     caps_total: capsTotalRaw,
     status: 'draft',
   };
@@ -678,7 +693,16 @@ async function finalizeWizardAfterSlug(ctx, unique) {
   }
 
   // Выставляем счёт Stars и завершаем мастер
-  await finalizeOfferAndInvoiceStars(ctx, form);
+  let finalizeCtx = ctx;
+  if (typeof ctx?.replyWithInvoice !== 'function') {
+    const fallbackCtx = Object.create(ctx);
+    fallbackCtx.replyWithInvoice = async () => {
+      console.warn('[adsWizard] replyWithInvoice missing on ctx, skipping invoice send');
+    };
+    finalizeCtx = fallbackCtx;
+  }
+
+  await finalizeOfferAndInvoiceStars(finalizeCtx, form);
   try {
     await ctx.scene.leave();
   } catch {}

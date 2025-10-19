@@ -39,8 +39,7 @@ await ensureBotSelf(bot);
 // сцены
 const stage = new Scenes.Stage([adsWizardScene]);
 
-// сессии (твой кастомный store)
-bot.use(
+const middlewares = [
   session({
     store: sessionStore,
     getSessionKey(ctx) {
@@ -50,16 +49,15 @@ bot.use(
       return /^[0-9]+$/.test(key) ? key : undefined;
     },
   }),
-);
-bot.use(stage.middleware());
+  stage.middleware(),
+];
 
-// link-capture (по флагу)
 if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   try {
     const module = await import('./link-capture.js');
     const linkCapture = module?.default;
-    if (linkCapture) {
-      bot.use(linkCapture());
+    if (typeof linkCapture === 'function') {
+      middlewares.push(linkCapture());
       console.log('[BOOT] link-capture enabled');
     } else {
       console.warn('[BOOT] link-capture module missing default export');
@@ -69,6 +67,27 @@ if (process.env.DISABLE_LINK_CAPTURE !== 'true') {
   }
 } else {
   console.log('[BOOT] link-capture disabled');
+}
+
+const traceMiddleware = async (ctx, next) => {
+  const { updateType } = ctx;
+  const text = ctx.update?.message?.text;
+  const entities = ctx.update?.message?.entities;
+  console.log('[TRACE:IN ] type=%s text=%j entities=%j', updateType, text ?? null, entities ?? null);
+  try {
+    const result = await next();
+    console.log('[TRACE:OUT] type=%s text=%j', updateType, text ?? null);
+    return result;
+  } catch (error) {
+    console.error('[TRACE:ERR] type=%s message=%s', updateType, error?.message || error);
+    throw error;
+  }
+};
+
+middlewares.push(traceMiddleware);
+
+for (const middleware of middlewares) {
+  bot.use(middleware);
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -298,23 +317,6 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
 
   return offer;
 }
-
-// ─── логгирование апдейтов ───────────────────────────────────────────────────
-
-bot.use(async (ctx, next) => {
-  const { updateType } = ctx;
-  const text = ctx.update?.message?.text;
-  const entities = ctx.update?.message?.entities;
-  console.log('[TRACE:IN ] type=%s text=%j entities=%j', updateType, text ?? null, entities ?? null);
-  try {
-    const result = await next();
-    console.log('[TRACE:OUT] type=%s text=%j', updateType, text ?? null);
-    return result;
-  } catch (error) {
-    console.error('[TRACE:ERR] type=%s message=%s', updateType, error?.message || error);
-    throw error;
-  }
-});
 
 export function logUpdate(ctx, tag = 'update') {
   const update = ctx.update || {};
