@@ -103,6 +103,170 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function normalizeInteger(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.trunc(num);
+}
+
+function formatRub(cents) {
+  const amount = normalizeInteger(cents);
+  const formatted = (amount / 100).toFixed(2);
+  return `${formatted} ₽`;
+}
+
+function formatNumber(value) {
+  const num = normalizeInteger(value);
+  return num.toString();
+}
+
+function formatDateISO(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    date.getUTCDate(),
+  ).padStart(2, '0')}`;
+}
+
+function truncate(value, maxLength = 48) {
+  if (!value) return '';
+  const text = String(value);
+  if (text.length <= maxLength) return text;
+  if (maxLength <= 1) return text.slice(0, maxLength);
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function resolveContact(row) {
+  const payload = row?.action_payload;
+  const chatRef = row?.chat_ref;
+  const candidates = [];
+
+  if (payload && typeof payload === 'object') {
+    for (const key of [
+      'contact',
+      'contact_info',
+      'telegram',
+      'telegram_contact',
+      'contact_username',
+      'contact_handle',
+    ]) {
+      const value = payload?.[key];
+      if (typeof value === 'string' && value.trim()) {
+        candidates.push(value.trim());
+      }
+    }
+  }
+
+  if (chatRef && typeof chatRef === 'object') {
+    const username = chatRef?.username;
+    if (typeof username === 'string' && username.trim()) {
+      const handle = username.startsWith('@') ? username : `@${username}`;
+      candidates.push(handle.trim());
+    }
+    const title = chatRef?.title;
+    if (typeof title === 'string' && title.trim()) {
+      candidates.push(title.trim());
+    }
+    const invite = chatRef?.invite_link;
+    if (typeof invite === 'string' && invite.trim()) {
+      candidates.push(invite.trim());
+    }
+  }
+
+  const createdBy = row?.created_by_tg_id;
+  if (createdBy != null) {
+    const id = String(createdBy).trim();
+    if (id) {
+      candidates.push(`tg://user?id=${id}`);
+    }
+  }
+
+  return candidates.find(Boolean) || '—';
+}
+
+function buildHtmlTable(columns, dataRows) {
+  if (!Array.isArray(columns) || !columns.length) return '';
+  if (!Array.isArray(dataRows) || !dataRows.length) return '';
+
+  const preparedRows = dataRows.map((row) => {
+    const result = {};
+    for (const column of columns) {
+      const key = column.key;
+      const value = typeof column.value === 'function' ? column.value(row) : row[key];
+      result[key] = value == null ? '' : String(value);
+    }
+    return result;
+  });
+
+  const widths = new Map();
+  for (const column of columns) {
+    const key = column.key;
+    const headerWidth = String(column.header || '').length;
+    const cellWidth = preparedRows.reduce((max, row) => Math.max(max, (row[key] || '').length), 0);
+    widths.set(key, Math.min(Math.max(headerWidth, cellWidth), column.maxWidth || 64));
+  }
+
+  const lines = [];
+  const headerLine = columns
+    .map((column) => {
+      const key = column.key;
+      const width = widths.get(key) || String(column.header || '').length || 1;
+      const header = String(column.header || '');
+      return header.padEnd(width);
+    })
+    .join('  ');
+
+  lines.push(headerLine);
+  lines.push(headerLine.replace(/./g, '—'));
+
+  for (const row of preparedRows) {
+    const line = columns
+      .map((column) => {
+        const key = column.key;
+        const width = widths.get(key) || 1;
+        const value = row[key] || '';
+        return column.align === 'right' ? value.padStart(width) : value.padEnd(width);
+      })
+      .join('  ');
+    lines.push(line);
+  }
+
+  return `<pre>${escapeHtml(lines.join('\n'))}</pre>`;
+}
+
+function formatPaymentStatus(budgetCents, paidCents) {
+  const budget = normalizeInteger(budgetCents);
+  const paid = normalizeInteger(paidCents);
+  if (budget <= 0) {
+    if (paid <= 0) return '—';
+    return `оплачено ${formatRub(paid)}`;
+  }
+  if (paid >= budget) {
+    return 'оплачен';
+  }
+  if (paid > 0) {
+    return `частично (${formatRub(paid)} из ${formatRub(budget)})`;
+  }
+  return 'не оплачен';
+}
+
+function formatDateRangeLabel(startAt, endAt) {
+  const startLabel = formatDateISO(startAt);
+  const endLabel = (() => {
+    if (!endAt) return '';
+    const end = new Date(endAt instanceof Date ? endAt.getTime() : Number(endAt));
+    if (Number.isNaN(end.getTime())) return '';
+    // endAt is exclusive — subtract 1 second to display inclusive date
+    end.setUTCSeconds(end.getUTCSeconds() - 1);
+    return formatDateISO(end);
+  })();
+  if (startLabel && endLabel && startLabel !== endLabel) {
+    return `${startLabel} — ${endLabel}`;
+  }
+  return startLabel || endLabel || '';
+}
+
 function isAdmin(ctx) {
   const fromId = ctx.from?.id;
   if (fromId == null) return false;
@@ -294,6 +458,297 @@ function detectStartEventsFromMessage(message) {
 
 // ─── admin команды ────────────────────────────────────────────────────────────
 
+async function fetchPendingOffers() {
+  const sql = `
+    SELECT
+      id,
+      slug,
+      title,
+      budget_cents,
+      paid_cents,
+      created_at,
+      status,
+      action_payload,
+      chat_ref,
+      created_by_tg_id
+    FROM offers
+    WHERE COALESCE(paid_cents, 0) < COALESCE(budget_cents, 0)
+    ORDER BY created_at DESC
+    LIMIT 100
+  `;
+
+  try {
+    const res = await query(sql);
+    return res.rows || [];
+  } catch (error) {
+    if (error?.code === '42703') {
+      // columns missing (older schema) — fallback to basic list
+      const fallback = await query(
+        `SELECT id, slug, title, created_at, action_payload, chat_ref, created_by_tg_id FROM offers ORDER BY created_at DESC LIMIT 50`,
+      );
+      return fallback.rows || [];
+    }
+    throw error;
+  }
+}
+
+function buildPendingTable(rows) {
+  const columns = [
+    {
+      key: 'contact',
+      header: 'контакт',
+      maxWidth: 32,
+      value: (row) => truncate(resolveContact(row), 32),
+    },
+    {
+      key: 'offer',
+      header: 'оффер',
+      maxWidth: 36,
+      value: (row) => {
+        const slug = row.slug && row.slug.trim();
+        const title = row.title && row.title.trim();
+        return truncate(slug || title || row.id, 36);
+      },
+    },
+    {
+      key: 'budget',
+      header: 'бюджет',
+      align: 'right',
+      value: (row) => (row.budget_cents != null ? formatRub(row.budget_cents) : '—'),
+    },
+    {
+      key: 'created',
+      header: 'создан',
+      align: 'right',
+      value: (row) => formatDateISO(row.created_at),
+    },
+    {
+      key: 'status',
+      header: 'статус оплаты',
+      maxWidth: 40,
+      value: (row) => truncate(formatPaymentStatus(row.budget_cents, row.paid_cents), 40),
+    },
+  ];
+
+  return buildHtmlTable(columns, rows);
+}
+
+function parseStatAdmArgs(text) {
+  const now = new Date();
+  const tokens = String(text || '')
+    .split(/\s+/)
+    .slice(1)
+    .filter(Boolean);
+
+  if (!tokens.length) {
+    const end = now;
+    const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return { start, end, label: formatDateRangeLabel(start, end) };
+  }
+
+  const first = tokens[0];
+  if (/^\d+$/.test(first)) {
+    const daysRaw = Number(first);
+    const days = Math.min(Math.max(daysRaw, 1), 365);
+    const end = now;
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    return { start, end, label: formatDateRangeLabel(start, end) };
+  }
+
+  const isDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
+  if (!isDate(first)) {
+    return { error: 'Формат: /statadm [дней] или /statadm YYYY-MM-DD [YYYY-MM-DD]' };
+  }
+
+  const startDate = new Date(`${first}T00:00:00Z`);
+  if (Number.isNaN(startDate.getTime())) {
+    return { error: 'Некорректная дата начала' };
+  }
+
+  let endDate = now;
+  if (tokens[1]) {
+    if (!isDate(tokens[1])) {
+      return { error: 'Некорректный формат конечной даты' };
+    }
+    const parsedEnd = new Date(`${tokens[1]}T23:59:59Z`);
+    if (Number.isNaN(parsedEnd.getTime())) {
+      return { error: 'Некорректная конечная дата' };
+    }
+    endDate = new Date(parsedEnd.getTime() + 1000); // make exclusive
+  }
+
+  if (startDate > endDate) {
+    return { start: endDate, end: startDate, label: formatDateRangeLabel(endDate, startDate) };
+  }
+
+  return { start: startDate, end: endDate, label: formatDateRangeLabel(startDate, endDate) };
+}
+
+async function fetchAdminStats(start, end) {
+  const params = [start.toISOString(), end.toISOString()];
+  const sql = `
+    WITH params AS (
+      SELECT $1::timestamptz AS start_at, $2::timestamptz AS end_at
+    ),
+    clicks AS (
+      SELECT offer_id, COUNT(*)::bigint AS clicks
+      FROM clicks, params
+      WHERE created_at >= params.start_at AND created_at < params.end_at
+      GROUP BY offer_id
+    ),
+    events_agg AS (
+      SELECT offer_id,
+             COUNT(*) FILTER (WHERE COALESCE(is_premium, false) = false)::bigint AS cd_regular,
+             COUNT(*) FILTER (WHERE COALESCE(is_premium, false) = true)::bigint AS cd_premium
+      FROM events, params
+      WHERE created_at >= params.start_at AND created_at < params.end_at
+      GROUP BY offer_id
+    ),
+    conv_period AS (
+      SELECT offer_id,
+             COUNT(*)::bigint AS conversions,
+             COALESCE(SUM(amount_cents), 0)::bigint AS amount_cents
+      FROM conversions, params
+      WHERE created_at >= params.start_at AND created_at < params.end_at
+      GROUP BY offer_id
+    ),
+    conv_total AS (
+      SELECT offer_id, COALESCE(SUM(amount_cents), 0)::bigint AS amount_cents
+      FROM conversions
+      GROUP BY offer_id
+    )
+    SELECT
+      o.id,
+      o.slug,
+      o.title,
+      o.created_at,
+      o.budget_cents,
+      o.paid_cents,
+      o.action_payload,
+      o.chat_ref,
+      o.created_by_tg_id,
+      COALESCE(c.clicks, 0) AS clicks,
+      COALESCE(e.cd_regular, 0) AS cd_regular,
+      COALESCE(e.cd_premium, 0) AS cd_premium,
+      COALESCE(cp.conversions, 0) AS conversions,
+      COALESCE(cp.amount_cents, 0) AS spend_cents,
+      COALESCE(ct.amount_cents, 0) AS total_spend_cents
+    FROM offers o
+    LEFT JOIN clicks c ON c.offer_id = o.id
+    LEFT JOIN events_agg e ON e.offer_id = o.id
+    LEFT JOIN conv_period cp ON cp.offer_id = o.id
+    LEFT JOIN conv_total ct ON ct.offer_id = o.id
+    WHERE (COALESCE(c.clicks, 0) + COALESCE(cp.conversions, 0) + COALESCE(e.cd_regular, 0) + COALESCE(e.cd_premium, 0)) > 0
+    ORDER BY o.created_at DESC
+  `;
+
+  try {
+    const res = await query(sql, params);
+    return res.rows || [];
+  } catch (error) {
+    if (error?.code !== '42P01') {
+      throw error;
+    }
+  }
+
+  const fallbackSql = `
+    WITH params AS (
+      SELECT $1::timestamptz AS start_at, $2::timestamptz AS end_at
+    ),
+    clicks AS (
+      SELECT offer_id, COUNT(*)::bigint AS clicks
+      FROM clicks, params
+      WHERE created_at >= params.start_at AND created_at < params.end_at
+      GROUP BY offer_id
+    )
+    SELECT
+      o.id,
+      o.slug,
+      o.title,
+      o.created_at,
+      o.budget_cents,
+      o.paid_cents,
+      o.action_payload,
+      o.chat_ref,
+      o.created_by_tg_id,
+      COALESCE(c.clicks, 0) AS clicks,
+      0::bigint AS cd_regular,
+      0::bigint AS cd_premium,
+      0::bigint AS conversions,
+      0::bigint AS spend_cents,
+      0::bigint AS total_spend_cents
+    FROM offers o
+    LEFT JOIN clicks c ON c.offer_id = o.id
+    WHERE COALESCE(c.clicks, 0) > 0
+    ORDER BY o.created_at DESC
+  `;
+
+  const fallbackRes = await query(fallbackSql, params);
+  return fallbackRes.rows || [];
+}
+
+function buildAdminStatTable(rows) {
+  const columns = [
+    {
+      key: 'contact',
+      header: 'контакт',
+      maxWidth: 28,
+      value: (row) => truncate(resolveContact(row), 28),
+    },
+    {
+      key: 'start',
+      header: 'старт',
+      align: 'right',
+      value: (row) => formatDateISO(row.created_at),
+    },
+    {
+      key: 'offer',
+      header: 'оффер',
+      maxWidth: 24,
+      value: (row) => truncate(row.slug || row.title || row.id, 24),
+    },
+    {
+      key: 'clicks',
+      header: 'клики',
+      align: 'right',
+      value: (row) => formatNumber(row.clicks),
+    },
+    {
+      key: 'cd_regular',
+      header: 'цд',
+      align: 'right',
+      value: (row) => formatNumber(row.cd_regular),
+    },
+    {
+      key: 'cd_premium',
+      header: 'цд премиум',
+      align: 'right',
+      maxWidth: 12,
+      value: (row) => formatNumber(row.cd_premium),
+    },
+    {
+      key: 'cost',
+      header: 'стоимость',
+      align: 'right',
+      value: (row) => formatRub(row.spend_cents),
+    },
+    {
+      key: 'remaining',
+      header: 'остаток бюджета',
+      align: 'right',
+      value: (row) => {
+        if (row.budget_cents == null) return '—';
+        const totalSpend = normalizeInteger(row.total_spend_cents);
+        const budget = normalizeInteger(row.budget_cents);
+        const remaining = budget - totalSpend;
+        return formatRub(remaining);
+      },
+    },
+  ];
+
+  return buildHtmlTable(columns, rows);
+}
+
 bot.command('admin_offers', async (ctx) => {
   if (!isAdmin(ctx)) {
     return ctx.reply('403');
@@ -320,6 +775,60 @@ bot.command('admin_offers', async (ctx) => {
     .join('\n\n');
 
   return ctx.reply(lines, { parse_mode: 'HTML', disable_web_page_preview: true });
+});
+
+bot.command('pending', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.reply('403');
+  }
+
+  const rows = await fetchPendingOffers();
+  if (!rows.length) {
+    await replyHtml(ctx, 'Нет офферов, ожидающих оплаты.');
+    return;
+  }
+
+  const table = buildPendingTable(rows);
+  await replyHtml(ctx, `📋 Офферы в ожидании оплаты\n${table}`);
+});
+
+bot.command('statadm', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.reply('403');
+  }
+
+  const parsed = parseStatAdmArgs(ctx.message?.text || '');
+  if (parsed.error) {
+    await replyHtml(ctx, parsed.error);
+    return;
+  }
+
+  const { start, end, label } = parsed;
+  const rows = await fetchAdminStats(start, end);
+  if (!rows.length) {
+    await replyHtml(ctx, 'За выбранный период данных нет.');
+    return;
+  }
+
+  const table = buildAdminStatTable(rows);
+  const periodLabel = label ? `Период: ${label}` : '';
+  const message = [`📊 Статистика по офферам`, periodLabel, table].filter(Boolean).join('\n');
+  await replyHtml(ctx, message);
+});
+
+bot.command('admin', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.reply('403');
+  }
+
+  const lines = [
+    'Команды администратора:',
+    '• /pending — офферы, ожидающие оплаты',
+    '• /statadm [дней|YYYY-MM-DD [YYYY-MM-DD]] — сводная статистика',
+    '• /admin_offers — последние офферы',
+    '• /offer_status <UUID> <active|paused|stopped|draft> — изменить статус',
+  ];
+  await replyHtml(ctx, lines.join('\n'));
 });
 
 bot.command('offer_status', async (ctx) => {
