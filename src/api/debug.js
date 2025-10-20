@@ -63,9 +63,16 @@ router.post('/debug/event', async (req, res) => {
 
     try {
       await sendPostbackForEvent({
-        offer: { id: offerId, postback_url: process.env.POSTBACK_URL || null, postback_secret: process.env.POSTBACK_SECRET || null },
+        offer: {
+          id: offerId,
+          postback_url: process.env.POSTBACK_URL || null,
+          postback_secret: process.env.POSTBACK_SECRET || null,
+          postback_method: process.env.POSTBACK_METHOD || null,
+          postback_timeout_ms: process.env.POSTBACK_TIMEOUT_MS || null,
+          postback_retries: process.env.POSTBACK_RETRIES || null,
+        },
         click,
-        event: { id: evId, event_type: ev, tg_id: tgId, created_at: new Date() }
+        event: { id: evId, event_type: ev, tg_id: tgId, created_at: new Date() },
       });
     } catch (e) {
       console.warn('[DEBUG event] postback failed', e.message || e);
