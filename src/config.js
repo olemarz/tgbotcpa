@@ -171,11 +171,26 @@ export function buildConfig(env = process.env) {
 
   const botUsername = trim(env.BOT_USERNAME) || '';
 
-  const postbackTimeoutMs = (() => {
-    const raw = trim(env.POSTBACK_TIMEOUT_MS);
-    if (!raw) return 4000;
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isNaN(parsed) ? 4000 : parsed;
+  const postback = (() => {
+    const url = trim(env.POSTBACK_URL) || null;
+    const methodRaw = trim(env.POSTBACK_METHOD) || 'GET';
+    const secret = trim(env.POSTBACK_SECRET) || null;
+
+    const timeoutRaw = trim(env.POSTBACK_TIMEOUT_MS);
+    const timeoutParsed = Number.parseInt(timeoutRaw ?? '', 10);
+    const timeoutMs = Number.isNaN(timeoutParsed) ? 4000 : timeoutParsed;
+
+    const retriesRaw = trim(env.POSTBACK_RETRIES);
+    const retriesParsed = Number.parseInt(retriesRaw ?? '', 10);
+    const retries = Number.isNaN(retriesParsed) ? 0 : Math.max(0, retriesParsed);
+
+    return {
+      url,
+      method: methodRaw.toUpperCase(),
+      secret,
+      timeoutMs,
+      retries,
+    };
   })();
 
   const idempotencyTtlSec = (() => {
@@ -214,7 +229,8 @@ export function buildConfig(env = process.env) {
     cpaApiKey,
     cpaSecret,
     botUsername,
-    postbackTimeoutMs,
+    postbackTimeoutMs: postback.timeoutMs,
+    postback,
     idempotencyTtlSec,
     allowedUpdates,
     tz: trim(env.TZ) || 'Europe/Rome',

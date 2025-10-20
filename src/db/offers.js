@@ -33,10 +33,14 @@ export async function insertOffer(form) {
   pushColumn(available, columns, values, params, 'payout_cents', form.payout_cents ?? null);
   pushColumn(available, columns, values, params, 'caps_total', form.caps_total ?? null);
   pushColumn(available, columns, values, params, 'budget_cents', form.budget_cents ?? null);
+  pushColumn(available, columns, values, params, 'paid_cents', form.paid_cents ?? null);
   pushColumn(available, columns, values, params, 'geo', form.geo ?? null);
   pushColumn(available, columns, values, params, 'status', form.status ?? null);
   pushColumn(available, columns, values, params, 'postback_url', form.postback_url ?? null);
   pushColumn(available, columns, values, params, 'postback_secret', form.postback_secret ?? null);
+  pushColumn(available, columns, values, params, 'postback_method', form.postback_method ?? null);
+  pushColumn(available, columns, values, params, 'postback_timeout_ms', form.postback_timeout_ms ?? null);
+  pushColumn(available, columns, values, params, 'postback_retries', form.postback_retries ?? null);
   pushColumn(available, columns, values, params, 'action_payload', form.action_payload ?? null);
   pushColumn(available, columns, values, params, 'created_by_tg_id', form.created_by_tg_id ?? null);
 
@@ -61,10 +65,14 @@ function mapOfferRow(row) {
     payout_cents: row.payout_cents ?? null,
     caps_total: row.caps_total ?? null,
     budget_cents: row.budget_cents ?? null,
+    paid_cents: row.paid_cents ?? null,
     geo: row.geo ?? null,
     status: row.status ?? null,
     postback_url: row.postback_url ?? null,
     postback_secret: row.postback_secret ?? null,
+    postback_method: row.postback_method ?? null,
+    postback_timeout_ms: row.postback_timeout_ms ?? null,
+    postback_retries: row.postback_retries ?? null,
     action_payload: row.action_payload ?? null,
     created_at: row.created_at ?? null,
     created_by_tg_id: row.created_by_tg_id ?? null,
@@ -73,7 +81,7 @@ function mapOfferRow(row) {
 
 export async function getOfferById(id) {
   const result = await pool.query(
-    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, postback_method, postback_timeout_ms, postback_retries, action_payload, created_at, created_by_tg_id
        FROM offers
       WHERE id = $1
       LIMIT 1`,
@@ -84,7 +92,7 @@ export async function getOfferById(id) {
 
 export async function getOfferBySlug(slug) {
   const result = await pool.query(
-    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, postback_method, postback_timeout_ms, postback_retries, action_payload, created_at, created_by_tg_id
        FROM offers
       WHERE slug = $1
       LIMIT 1`,
@@ -95,7 +103,7 @@ export async function getOfferBySlug(slug) {
 
 export async function listOffersByOwner(ownerTgId) {
   const result = await pool.query(
-    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, postback_method, postback_timeout_ms, postback_retries, action_payload, created_at, created_by_tg_id
        FROM offers
       WHERE created_by_tg_id = $1
       ORDER BY created_at DESC`,
@@ -106,7 +114,7 @@ export async function listOffersByOwner(ownerTgId) {
 
 export async function listAllOffers(limit = 50) {
   const result = await pool.query(
-    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, postback_method, postback_timeout_ms, postback_retries, action_payload, created_at, created_by_tg_id
        FROM offers
       ORDER BY created_at DESC
       LIMIT $1`,

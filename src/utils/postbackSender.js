@@ -1,88 +1,193 @@
 import crypto from 'node:crypto';
 import { query } from '../db/pool.js';
 import { config } from '../config.js';
+import { resolvePostbackTarget } from './postbackTarget.js';
+
+const MAX_ATTEMPTS = 5;
+
+const trim = (value) => (typeof value === 'string' ? value.trim() : value);
 
 function hmac(secret, payload) {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+function resolveMethod(offerMethod, configMethod) {
+  const fallback = trim(configMethod) || 'GET';
+  const method = trim(offerMethod) || fallback;
+  return String(method).toUpperCase();
+}
+
+function resolveTimeoutMs(offerTimeout, configTimeout) {
+  const fallback = Number.isFinite(configTimeout) ? Number(configTimeout) : 4000;
+  if (offerTimeout === undefined || offerTimeout === null) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(offerTimeout, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function resolveRetries(offerRetries, configRetries) {
+  const fallback = Number.isFinite(configRetries) ? Number(configRetries) : 0;
+  if (offerRetries === undefined || offerRetries === null) {
+    return Math.max(0, fallback);
+  }
+  const parsed = Number.parseInt(offerRetries, 10);
+  if (Number.isNaN(parsed)) {
+    return Math.max(0, fallback);
+  }
+  return Math.max(0, parsed);
+}
+
+function buildParams({ offer, click, event, sentAt, secret }) {
+  const params = new URLSearchParams();
+  if (offer?.id) params.set('offer_id', String(offer.id));
+  if (event?.id) params.set('event_id', String(event.id));
+
+  const eventType = event?.event_type ?? event?.event;
+  if (eventType) params.set('event_type', String(eventType));
+
+  if (event?.tg_id !== undefined && event?.tg_id !== null) {
+    params.set('tg_id', String(event.tg_id));
+  }
+
+  const clickId = click?.click_id ?? click?.id;
+  if (clickId) params.set('click_id', String(clickId));
+
+  if (click?.uid) params.set('uid', String(click.uid));
+
+  if (event?.created_at) {
+    const created = new Date(event.created_at).toISOString();
+    params.set('created_at', created);
+  }
+
+  params.set('sent_at', sentAt);
+
+  if (secret) {
+    const base = params.toString();
+    params.set('sig', hmac(secret, base));
+  }
+
+  return params;
+}
+
+async function logPostbackAttempt({
+  offerId,
+  eventId,
+  url,
+  method,
+  status,
+  duration,
+  body,
+  attempt,
+  payload,
+  eventType,
+}) {
+  try {
+    await query(
+      `INSERT INTO postbacks (offer_id, event_id, url, method, status_code, response_ms, response_body, attempt, payload, event_type)` +
+        ' VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [
+        offerId,
+        eventId ?? null,
+        url,
+        method,
+        status,
+        duration,
+        String(body ?? '').slice(0, 4000),
+        attempt,
+        payload,
+        eventType ?? null,
+      ],
+    );
+  } catch (error) {
+    console.warn('[postback] log failed:', error?.message || error);
+  }
+}
+
 /**
  * sendPostbackForEvent({ offer, click, event })
- *  offer: { id, postback_url?, postback_method?, postback_secret?, postback_timeout_ms? }
+ *  offer: { id, postback_url?, postback_method?, postback_secret?, postback_timeout_ms?, postback_retries? }
  *  click: { id|click_id, uid } | null
  *  event: { id, event|event_type, tg_id, created_at }
  */
 export async function sendPostbackForEvent({ offer, click, event }) {
-  const baseUrl =
-    (offer?.postback_url && String(offer.postback_url).trim()) ||
-    config?.postback?.url ||
-    process.env.POSTBACK_URL ||
-    null;
+  const baseUrl = resolvePostbackTarget(offer);
 
   if (!baseUrl) {
     console.warn('[postback] skipped: no URL');
     return { skipped: true };
   }
 
-  const method =
-    (offer?.postback_method || config?.postback?.method || process.env.POSTBACK_METHOD || 'GET').toUpperCase();
+  const secret = trim(offer?.postback_secret) || trim(config?.postback?.secret) || null;
+  const method = resolveMethod(offer?.postback_method, config?.postback?.method);
+  const timeoutMs = resolveTimeoutMs(offer?.postback_timeout_ms, config?.postback?.timeoutMs);
+  const retries = resolveRetries(offer?.postback_retries, config?.postback?.retries);
+  const maxAttempts = Math.min(MAX_ATTEMPTS, Math.max(1, 1 + retries));
 
-  const timeoutMs = Number(
-    offer?.postback_timeout_ms || config?.postback?.timeoutMs || process.env.POSTBACK_TIMEOUT_MS || 5000
-  );
+  const sentAt = new Date().toISOString();
+  const params = buildParams({ offer, click, event, sentAt, secret });
+  const payload = params.toString();
 
-  const secret =
-    offer?.postback_secret || config?.postback?.secret || process.env.POSTBACK_SECRET || null;
-
-  const params = new URLSearchParams({
-    offer_id: String(offer.id),
-    event_type: String(event.event_type || event.event),
-    tg_id: String(event.tg_id),
-    click_id: String(click?.click_id || click?.id || ''),
-    uid: String(click?.uid || ''),
-    ts: new Date().toISOString(),
-  });
-
-  if (secret) params.set('sig', hmac(secret, params.toString()));
-
-  let url = baseUrl;
   /** @type {RequestInit} */
-  const opts = { method, redirect: 'follow', headers: {} };
+  const requestInit = { method, redirect: 'follow', headers: {} };
+  let requestUrl = baseUrl;
 
   if (method === 'GET') {
-    url += (url.includes('?') ? '&' : '?') + params.toString();
+    requestUrl += (requestUrl.includes('?') ? '&' : '?') + payload;
   } else {
-    opts.headers['content-type'] = 'application/x-www-form-urlencoded';
-    opts.body = params.toString();
+    requestInit.headers['content-type'] = 'application/x-www-form-urlencoded';
+    requestInit.body = payload;
   }
 
-  const t0 = Date.now();
-  let status = 0, body = '';
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, { ...opts, signal: ctrl.signal });
-    status = res.status;
-    body = await res.text();
-    clearTimeout(timer);
-  } catch (e) {
-    body = String(e?.message || e);
+  let lastStatus = 0;
+  let lastBody = '';
+
+  const eventType = event?.event_type ?? event?.event ?? null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const startedAt = Date.now();
+    let status = 0;
+    let responseBody = '';
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(requestUrl, { ...requestInit, signal: controller.signal });
+      status = response.status;
+      responseBody = await response.text();
+    } catch (error) {
+      responseBody = String(error?.message || error);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const duration = Date.now() - startedAt;
+    lastStatus = status;
+    lastBody = responseBody;
+
+    await logPostbackAttempt({
+      offerId: offer?.id ?? null,
+      eventId: event?.id ?? null,
+      url: requestUrl,
+      method,
+      status,
+      duration,
+      body: responseBody,
+      attempt,
+      payload,
+      eventType,
+    });
+
+    if (status >= 200 && status < 300) {
+      console.log('[postback] ok', { status, url: requestUrl, attempt });
+      return { status, url: requestUrl, attempt, payload };
+    }
+
+    console.error('[postback] failed', { status, url: requestUrl, attempt });
   }
 
-  try {
-    await query(
-      `INSERT INTO postbacks (offer_id, event_id, url, method, status_code, response_ms, response_body, attempt)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [offer.id, event?.id || null, url, method, status, Date.now() - t0, String(body).slice(0,4000), 1]
-    );
-  } catch (e) {
-    console.warn('[postback] log failed:', e?.message || e);
-  }
-
-  if (status < 200 || status >= 300) {
-    console.error('[postback] failed', { status, url });
-  } else {
-    console.log('[postback] ok', { status });
-  }
-  return { status, url };
+  return { status: lastStatus, url: requestUrl, attempt: maxAttempts, payload, error: lastBody };
 }
+
+export default sendPostbackForEvent;
