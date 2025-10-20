@@ -9,7 +9,15 @@ const DEFAULT_MIN_RATES = {
   start_bot: { base: 3, premium: 10 }
 };
 
-const DEFAULT_ALLOWED_UPDATES = ['message', 'callback_query', 'chat_member', 'my_chat_member'];
+const DEFAULT_ALLOWED_UPDATES = [
+  'message',
+  'callback_query',
+  'chat_member',
+  'my_chat_member',
+  'chat_join_request',
+  'message_reaction',
+  'poll_answer',
+];
 
 const GEO_MARKUP_JSON = (process.env.GEO_MARKUP_PERCENT_JSON || '').trim() || '{}';
 let GEO_MARKUP_MAP = {};
