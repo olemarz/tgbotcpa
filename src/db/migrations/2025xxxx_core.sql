@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS clicks (
 );
 CREATE INDEX IF NOT EXISTS clicks_offer_created_idx ON clicks(offer_id, created_at DESC);
 
+ALTER TABLE clicks ADD COLUMN IF NOT EXISTS meta jsonb;
+UPDATE clicks SET meta = COALESCE(meta, '{}'::jsonb);
+ALTER TABLE clicks ALTER COLUMN meta SET DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS events (
   id bigserial PRIMARY KEY,
   offer_id bigint NOT NULL REFERENCES offers(id),
@@ -75,6 +79,10 @@ CREATE TABLE IF NOT EXISTS attribution (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (click_id, tg_id)
 );
+
+ALTER TABLE attribution ADD COLUMN IF NOT EXISTS meta jsonb;
+UPDATE attribution SET meta = COALESCE(meta, '{}'::jsonb);
+ALTER TABLE attribution ALTER COLUMN meta SET DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS postbacks (
   id bigserial PRIMARY KEY,
