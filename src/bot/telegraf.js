@@ -13,7 +13,7 @@ import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
-import { listRecentOffers } from '../db/offers.js';
+import { listAllOffers } from '../db/offers.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -126,7 +126,7 @@ bot.command('admin_offers', async (ctx) => {
     return ctx.reply('403');
   }
 
-  const list = await listRecentOffers(15);
+  const list = await listAllOffers(15);
   if (!list.length) {
     return ctx.reply('Нет офферов');
   }
@@ -428,8 +428,8 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
     SELECT click_id, offer_id, uid
     FROM attribution
     WHERE tg_id=$1 AND state='started'
-      AND created_at >= NOW() - INTERVAL '24 hours'
-    ORDER BY created_at DESC LIMIT 1
+      AND last_seen >= NOW() - INTERVAL '24 hours'
+    ORDER BY last_seen DESC LIMIT 1
   `,
     [tgId],
   );
@@ -437,16 +437,29 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
 
   const { click_id: attrClickId, offer_id, uid } = res.rows[0];
   const existing = await query(
-    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
+    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND event_type=$3 LIMIT 1`,
     [offer_id, tgId, JOIN_GROUP_EVENT],
   );
   if (existing.rowCount) {
-    await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
+    await query(
+      `UPDATE attribution
+          SET state='converted', last_seen = now()
+        WHERE user_id=$1 AND offer_id=$2`,
+      [tgId, offer_id],
+    );
     return;
   }
 
-  await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offer_id, tgId, JOIN_GROUP_EVENT]);
-  const updated = await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
+  await query(
+    `INSERT INTO events(offer_id, user_id, uid, tg_id, event_type) VALUES($1,$2,$3,$4,$5)`,
+    [offer_id, tgId, uid ?? '', tgId, JOIN_GROUP_EVENT],
+  );
+  const updated = await query(
+    `UPDATE attribution
+        SET state='converted', last_seen = now(), click_id = COALESCE($3, click_id)
+      WHERE user_id=$1 AND offer_id=$2`,
+    [tgId, offer_id, attrClickId],
+  );
 
   if (!updated.rowCount) {
     return;

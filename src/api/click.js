@@ -5,7 +5,6 @@ import { query } from '../db/index.js';
 import { shortToken, uuid } from '../util/id.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const NUMERIC_REGEXP = /^\d+$/;
 
 const CLICK_TOKEN_RETRIES = 5;
 
@@ -54,19 +53,26 @@ async function resolveOfferId(raw) {
     return { ok: true, value };
   }
 
-  if (NUMERIC_REGEXP.test(value)) {
-    return { ok: true, value: Number.parseInt(value, 10) };
+// helper: нормализуем offerId из пути: UUID или slug
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function resolveOfferId(value, query) {
+  if (!value) return { ok: false, status: 400, error: 'offer id or slug required' };
+
+  // 1) UUID — возвращаем как есть
+  if (UUID_RE.test(String(value))) {
+    return { ok: true, value: String(value) };
   }
 
+  // 2) Пытаемся найти по slug (если колонки нет — вернём 404)
   try {
-    const res = await query(`SELECT id FROM offers WHERE slug=$1 LIMIT 1`, [value]);
-    if (!res.rowCount) {
-      return { ok: false, status: 404, error: 'offer not found' };
-    }
+    const res = await query(`SELECT id FROM offers WHERE slug = $1 LIMIT 1`, [String(value)]);
+    if (!res.rowCount) return { ok: false, status: 404, error: 'offer not found' };
     return { ok: true, value: res.rows[0].id };
   } catch (error) {
+    // если нет колонки slug — считаем, что такого способа нет
     if (error?.code === '42703' || error?.code === '42P01') {
-      console.warn('[click] offers.slug column missing, cannot resolve slug');
+      console.warn('[click] offers.slug column missing; cannot resolve slug');
       return { ok: false, status: 404, error: 'offer not found' };
     }
     console.error('[click] failed to resolve offer by slug', error?.message || error);
@@ -97,8 +103,8 @@ async function insertClickRow({
   let attempts = 0;
   while (attempts < CLICK_TOKEN_RETRIES) {
     const token = shortToken();
-    const insertColumns = [];
-    const values = [];
+    const insertColumns = ['id', 'offer_id', 'uid', 'click_id', 'start_token'];
+    const values = [uuid(), offerId, uid, externalClickId, token];
 
     let generatedClickId = null;
     if (columns.get('id') === 'uuid') {

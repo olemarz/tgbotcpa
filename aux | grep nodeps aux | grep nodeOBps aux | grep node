@@ -1,0 +1,90 @@
+commit b6b89dc6ff617bbc0a16aef635e365f9b69369e4
+Merge: fea732e b442846
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 16:17:36 2025 +0300
+
+    Merge pull request #150 from olemarz/codex/define-basic-entities-and-roles
+    
+    Add attribution tracking tables
+
+commit b442846b792e06506f3b97e6d512ed9cd6b759b5
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 16:17:22 2025 +0300
+
+    Add attribution tracking tables
+
+A	db/migrations/20251101_attribution_tables.sql
+
+commit fea732ecec56e331420ec5d3367ace19936f00d6
+Merge: cff9d43 cedc0a8
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 10:28:48 2025 +0300
+
+    Merge pull request #149 from olemarz/codex/implement-payment-stub-for-offers
+    
+    Add offer persistence and Stars invoicing stub
+
+commit cedc0a8e501119154e2918922e4a24ccb95f94bc
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 10:28:32 2025 +0300
+
+    Restore finalize offer flow with geo adjustments
+
+M	.env.example
+M	src/bot/adsWizard.js
+M	src/bot/offerFinalize.js
+A	src/bot/paymentsStars.js
+M	src/bot/telegraf.js
+A	src/db/offers.js
+
+commit cff9d43160556d749caaee4495f4142f195966b7
+Merge: 28544c8 b26ad2c
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 01:01:02 2025 +0300
+
+    Merge pull request #148 from olemarz/codex/add-prompting-and-link-validation-for-/ads
+    
+    Add Telegram link validation to ads wizard
+
+commit b26ad2cbc6ce9e4c77003772167c5efd14334e42
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 01:00:31 2025 +0300
+
+    Improve ads wizard link prompt and validation
+
+M	src/bot/adsWizard.js
+
+commit 28544c83dcaad6c2999d72436c44b81b5de3eb56
+Merge: 2474074 01bd688
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 00:41:59 2025 +0300
+
+    Merge pull request #147 from olemarz/codex/add-geomarkuppercent-to-config.js
+    
+    Add geo markup percent config parsing
+
+commit 01bd68881d8c30017bec91de5f15ed271a489a6b
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 00:41:36 2025 +0300
+
+    Add geo markup configuration
+
+M	.env
+M	src/config.js
+
+commit 2474074df1be4a31babb758f30d4d24093bce34e
+Merge: b2b7b2d 336ea25
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 00:41:20 2025 +0300
+
+    Merge pull request #146 from olemarz/codex/replace-calculation-block-in-finalizewizardafterslug
+    
+    Adjust payout calculation in ads wizard
+
+commit 336ea258caab59ded62593f5b669b8d351ed5990
+Author: olemarz <om@adspirin.com>
+Date:   Mon Oct 20 00:41:05 2025 +0300
+
+    Adjust payout calculation in ads wizard
+
+M	src/bot/adsWizard.js
