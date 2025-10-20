@@ -1,6 +1,6 @@
 import https from 'node:https';
 import 'dotenv/config';
-import { Telegraf, Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session, Markup } from 'telegraf';
 
 import { query } from '../db/index.js';
 import { insertEvent } from '../db/events.js';
@@ -13,7 +13,13 @@ import sessionStore from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
-import { listAllOffers } from '../db/offers.js';
+import { listAllOffers, listOffersByOwner } from '../db/offers.js';
+import {
+  upsertAdvertiser,
+  getAdvertiser,
+  setAdvertiserBlocked,
+  listAdvertisersByIds,
+} from '../db/advertisers.js';
 import { sendPostbackForEvent } from '../services/postback.js';
 
 console.log('[BOOT] telegraf init');
@@ -103,21 +109,26 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+const ADMIN_ID_SET = (() => {
+  const ids = new Set();
+  const list = String(process.env.ADMIN_IDS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const id of list) {
+    ids.add(id);
+  }
+  const legacy = (process.env.ADMIN_TG_ID || '').trim();
+  if (legacy) {
+    ids.add(legacy);
+  }
+  return ids;
+})();
+
 function isAdmin(ctx) {
   const fromId = ctx.from?.id;
   if (fromId == null) return false;
-
-  const list = String(process.env.ADMIN_IDS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (list.includes(String(fromId))) {
-    return true;
-  }
-
-  const legacy = (process.env.ADMIN_TG_ID || '').trim();
-  return legacy && String(fromId) === legacy;
+  return ADMIN_ID_SET.has(String(fromId));
 }
 
 function normalizePayload(rawPayload) {
@@ -236,6 +247,68 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
   console.log(`[EVENT] saved ${eventType} by ${tgId} for offer ${context.offerId}`);
 }
 
+async function ensureAdvertiserFromContext(ctx) {
+  const from = ctx?.from;
+  if (!from?.id) {
+    return null;
+  }
+
+  try {
+    return await upsertAdvertiser({
+      tgId: from.id,
+      username: from.username ?? null,
+      firstName: from.first_name ?? null,
+      lastName: from.last_name ?? null,
+    });
+  } catch (error) {
+    console.error('[advertiser] failed to upsert', error?.message || error);
+    return null;
+  }
+}
+
+function safeNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function formatStarsFromCents(cents) {
+  const stars = Math.round(safeNumber(cents) / 100);
+  return `${stars}⭐`;
+}
+
+function formatCurrencyFromCents(cents) {
+  const amount = safeNumber(cents) / 100;
+  return `${amount.toFixed(2)} ₽`;
+}
+
+function formatAdvertiserLabel(row, fallbackId) {
+  if (!row) {
+    return fallbackId != null ? `tg:${fallbackId}` : '-';
+  }
+
+  let label = null;
+  if (row.contact) {
+    label = row.contact;
+  } else if (row.username) {
+    label = `@${row.username}`;
+  } else {
+    const name = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+    if (name) {
+      label = name;
+    }
+  }
+
+  if (!label || !label.trim()) {
+    label = fallbackId != null ? `tg:${fallbackId}` : '-';
+  }
+
+  if (row.blocked) {
+    label = `🚫 ${label}`;
+  }
+
+  return label;
+}
+
 function detectStartEventsFromValue(value, source) {
   if (typeof value !== 'string' || !value) {
     return [];
@@ -293,6 +366,434 @@ function detectStartEventsFromMessage(message) {
 }
 
 // ─── admin команды ────────────────────────────────────────────────────────────
+
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date, delta) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + delta);
+  return d;
+}
+
+function parseStatAdmRange(raw) {
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const defaultRange = { start: todayStart, end: addDays(todayStart, 1), label: 'today' };
+
+  if (!raw) {
+    return defaultRange;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === 'today') {
+    return defaultRange;
+  }
+
+  if (normalized === '7d' || normalized === '7') {
+    const start = addDays(todayStart, -6);
+    return { start, end: addDays(todayStart, 1), label: '7d' };
+  }
+
+  if (normalized === '30d' || normalized === '30') {
+    const start = addDays(todayStart, -29);
+    return { start, end: addDays(todayStart, 1), label: '30d' };
+  }
+
+  const matches = normalized.match(/\d{4}-\d{2}-\d{2}/g) || [];
+  if (matches.length === 0) {
+    return defaultRange;
+  }
+
+  const startDate = startOfDay(matches[0]);
+  const endDate = matches.length > 1 ? startOfDay(matches[1]) : startDate;
+
+  const [from, to] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+  return { start: from, end: addDays(to, 1), label: `${matches[0]}..${matches[matches.length - 1]}` };
+}
+
+function formatDateForDisplay(value) {
+  if (!value) return '-';
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '-';
+    }
+    return date.toISOString().slice(0, 10);
+  } catch {
+    return '-';
+  }
+}
+
+bot.command('admin', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  const lines = [
+    '<b>Команды администратора</b>',
+    '/ads — запустить мастер (стандартный или без оплаты)',
+    '/myoffers — список офферов',
+    '/statadm [today|7d|30d|YYYY-MM-DD YYYY-MM-DD] — статистика по офферам',
+    '/pending — офферы без оплаты',
+    '/ban &lt;tg_id&gt; — заблокировать рекламодателя',
+    '/admin_offers — краткий список последних офферов',
+    '/offer_status &lt;UUID&gt; &lt;status&gt; — смена статуса оффера',
+  ];
+
+  await replyHtml(ctx, lines.join('\n'));
+});
+
+bot.command('myoffers', async (ctx) => {
+  logUpdate(ctx, 'myoffers');
+  const fromId = ctx.from?.id;
+  if (fromId == null) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID.');
+    return;
+  }
+
+  const admin = isAdmin(ctx);
+  let offers;
+  try {
+    offers = admin ? await listAllOffers(200) : await listOffersByOwner(fromId);
+  } catch (error) {
+    console.error('[MYOFFERS] list error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить список офферов.');
+    return;
+  }
+
+  if (!offers?.length) {
+    await replyHtml(ctx, admin ? 'Офферов нет.' : 'У вас пока нет офферов.');
+    return;
+  }
+
+  const ownerMap = new Map();
+  if (admin) {
+    const ownerIds = Array.from(
+      new Set(
+        offers
+          .map((offer) => (offer.created_by_tg_id != null ? String(offer.created_by_tg_id) : null))
+          .filter(Boolean),
+      ),
+    );
+    if (ownerIds.length) {
+      try {
+        const owners = await listAdvertisersByIds(ownerIds);
+        for (const owner of owners) {
+          ownerMap.set(String(owner.tg_id), owner);
+        }
+      } catch (error) {
+        console.error('[MYOFFERS] advertisers load error:', error?.message || error);
+      }
+    }
+  } else {
+    const advertiser = await ensureAdvertiserFromContext(ctx);
+    ownerMap.set(String(fromId), advertiser ?? null);
+  }
+
+  const lines = offers.map((offer) => {
+    const slug = offer.slug || offer.id;
+    const status = offer.status || 'draft';
+    const payout = formatStarsFromCents(offer.payout_cents ?? 0);
+    const budget = formatStarsFromCents(offer.budget_cents ?? 0);
+    const paid = formatStarsFromCents(offer.paid_cents ?? 0);
+    const ownerLabel = admin
+      ? formatAdvertiserLabel(ownerMap.get(String(offer.created_by_tg_id)), offer.created_by_tg_id)
+      : 'вы';
+
+    const parts = [
+      `• <b>${escapeHtml(slug)}</b> — ${escapeHtml(status)}`,
+      `  payout: <code>${escapeHtml(payout)}</code>, бюджет: <code>${escapeHtml(budget)}</code>, оплачено: <code>${escapeHtml(paid)}</code>`,
+    ];
+
+    if (admin) {
+      parts.push(`  владелец: <code>${escapeHtml(ownerLabel)}</code>`);
+    }
+
+    return parts.join('\n');
+  });
+
+  await replyHtml(ctx, lines.join('\n\n'));
+});
+
+bot.command('statadm', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  const raw = (ctx.message?.text || '').replace(/^\/statadm(@\w+)?/i, '').trim();
+  const range = parseStatAdmRange(raw);
+  const params = [range.start, range.end];
+
+  let stats;
+  try {
+    const res = await query(
+      `
+      WITH click_stats AS (
+        SELECT offer_id, COUNT(*)::bigint AS clicks
+          FROM clicks
+         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+           AND ($2::timestamptz IS NULL OR created_at < $2)
+         GROUP BY offer_id
+      ),
+      event_stats AS (
+        SELECT offer_id,
+               COUNT(*)::bigint AS conversions,
+               COUNT(*) FILTER (WHERE is_premium) AS premium_conversions
+          FROM events
+         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+           AND ($2::timestamptz IS NULL OR created_at < $2)
+         GROUP BY offer_id
+      ),
+      spend_stats AS (
+        SELECT offer_id, COALESCE(SUM(amount_cents), 0)::bigint AS spend_cents
+          FROM conversions
+         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+           AND ($2::timestamptz IS NULL OR created_at < $2)
+         GROUP BY offer_id
+      )
+      SELECT
+        o.id,
+        o.slug,
+        o.created_at,
+        o.budget_cents,
+        o.paid_cents,
+        o.created_by_tg_id,
+        a.username,
+        a.first_name,
+        a.last_name,
+        a.contact,
+        a.blocked,
+        COALESCE(cs.clicks, 0) AS clicks,
+        COALESCE(es.conversions, 0) AS conversions,
+        COALESCE(es.premium_conversions, 0) AS premium_conversions,
+        COALESCE(ss.spend_cents, 0) AS spend_cents
+      FROM offers o
+      LEFT JOIN click_stats cs ON cs.offer_id = o.id
+      LEFT JOIN event_stats es ON es.offer_id = o.id
+      LEFT JOIN spend_stats ss ON ss.offer_id = o.id
+      LEFT JOIN advertisers a ON a.tg_id = o.created_by_tg_id
+      WHERE (
+        COALESCE(cs.clicks, 0) > 0
+        OR COALESCE(es.conversions, 0) > 0
+        OR COALESCE(es.premium_conversions, 0) > 0
+        OR COALESCE(ss.spend_cents, 0) > 0
+        OR (($1::timestamptz IS NOT NULL AND o.created_at >= $1) AND ($2::timestamptz IS NULL OR o.created_at < $2))
+      )
+      ORDER BY o.created_at DESC
+      LIMIT 200
+    `,
+      params,
+    );
+    stats = res.rows;
+  } catch (error) {
+    console.error('[STATADM] query error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить статистику.');
+    return;
+  }
+
+  if (!stats?.length) {
+    const fromText = formatDateForDisplay(range.start);
+    const toText = formatDateForDisplay(addDays(range.end, -1));
+    await replyHtml(ctx, `Нет данных за период ${escapeHtml(fromText)} — ${escapeHtml(toText)}.`);
+    return;
+  }
+
+  const rows = stats.map((row) => {
+    const clicks = safeNumber(row.clicks);
+    const conversions = safeNumber(row.conversions);
+    const premium = safeNumber(row.premium_conversions);
+    const spendCents = safeNumber(row.spend_cents);
+    const budgetCents = safeNumber(row.budget_cents);
+    const balanceCents = budgetCents - spendCents;
+
+    return {
+      contact: formatAdvertiserLabel(row, row.created_by_tg_id),
+      start: formatDateForDisplay(row.created_at),
+      slug: row.slug || row.id,
+      clicks,
+      conversions,
+      premium,
+      spendCents,
+      balanceCents,
+      budgetCents,
+    };
+  });
+
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.clicks += row.clicks;
+      acc.conversions += row.conversions;
+      acc.premium += row.premium;
+      acc.spendCents += row.spendCents;
+      acc.budgetCents += row.budgetCents;
+      return acc;
+    },
+    { clicks: 0, conversions: 0, premium: 0, spendCents: 0, budgetCents: 0 },
+  );
+
+  const tableRows = rows.map((row) => ({
+    contact: row.contact,
+    start: row.start,
+    slug: row.slug,
+    clicks: String(row.clicks),
+    conversions: String(row.conversions),
+    premium: String(row.premium),
+    cost: formatCurrencyFromCents(row.spendCents),
+    balance: formatCurrencyFromCents(row.balanceCents),
+  }));
+
+  tableRows.push({
+    contact: 'Итого',
+    start: '',
+    slug: '',
+    clicks: String(totals.clicks),
+    conversions: String(totals.conversions),
+    premium: String(totals.premium),
+    cost: formatCurrencyFromCents(totals.spendCents),
+    balance: formatCurrencyFromCents(totals.budgetCents - totals.spendCents),
+  });
+
+  const columns = [
+    { key: 'contact', label: 'контакт', align: 'left' },
+    { key: 'start', label: 'старт', align: 'left' },
+    { key: 'slug', label: 'slug', align: 'left' },
+    { key: 'clicks', label: 'клики', align: 'right' },
+    { key: 'conversions', label: 'цд', align: 'right' },
+    { key: 'premium', label: 'цд прем', align: 'right' },
+    { key: 'cost', label: 'стоимость', align: 'right' },
+    { key: 'balance', label: 'остаток', align: 'right' },
+  ];
+
+  const widths = columns.reduce((acc, column) => {
+    const values = tableRows.map((row) => row[column.key] ?? '');
+    const maxLength = Math.max(column.label.length, ...values.map((value) => String(value).length));
+    acc[column.key] = Math.min(maxLength, 48);
+    return acc;
+  }, {});
+
+  const formatRow = (row) =>
+    columns
+      .map((column) => {
+        const rawValue = String(row[column.key] ?? '');
+        const width = widths[column.key];
+        if (column.align === 'right') {
+          return rawValue.padStart(width);
+        }
+        return rawValue.padEnd(width);
+      })
+      .join('  ');
+
+  const headerRow = formatRow(Object.fromEntries(columns.map((column) => [column.key, column.label])));
+  const separatorRow = headerRow.replace(/./g, '─');
+  const bodyRows = tableRows.map((row) => formatRow(row));
+
+  const periodFrom = formatDateForDisplay(range.start);
+  const periodTo = formatDateForDisplay(addDays(range.end, -1));
+  const tableText = [headerRow, separatorRow, ...bodyRows].join('\n');
+
+  const message =
+    `<b>Статистика офферов</b> (${escapeHtml(periodFrom)} — ${escapeHtml(periodTo)})\n` +
+    `<pre>${escapeHtml(tableText)}</pre>`;
+
+  await replyHtml(ctx, message);
+});
+
+bot.command('pending', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  let rows;
+  try {
+    const res = await query(
+      `
+      SELECT
+        o.id,
+        o.slug,
+        o.status,
+        o.budget_cents,
+        o.paid_cents,
+        o.created_by_tg_id,
+        a.username,
+        a.first_name,
+        a.last_name,
+        a.contact,
+        a.blocked
+      FROM offers o
+      LEFT JOIN advertisers a ON a.tg_id = o.created_by_tg_id
+      WHERE COALESCE(o.budget_cents, 0) > 0
+        AND COALESCE(o.paid_cents, 0) < COALESCE(o.budget_cents, 0)
+      ORDER BY o.created_at DESC
+      LIMIT 100
+    `,
+      [],
+    );
+    rows = res.rows;
+  } catch (error) {
+    console.error('[PENDING] query error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить список офферов.');
+    return;
+  }
+
+  if (!rows?.length) {
+    await replyHtml(ctx, 'Нет неподтверждённых офферов.');
+    return;
+  }
+
+  const lines = rows.map((row) => {
+    const slug = row.slug || row.id;
+    const status = row.status || 'draft';
+    const budget = formatStarsFromCents(row.budget_cents ?? 0);
+    const paid = formatStarsFromCents(row.paid_cents ?? 0);
+    const remainingCents = Math.max(0, safeNumber(row.budget_cents) - safeNumber(row.paid_cents));
+    const balanceStars = formatStarsFromCents(remainingCents);
+    const owner = formatAdvertiserLabel(row, row.created_by_tg_id);
+
+    return (
+      `• <b>${escapeHtml(slug)}</b> — ${escapeHtml(status)}\n` +
+      `  владелец: <code>${escapeHtml(owner)}</code>\n` +
+      `  бюджет: <code>${escapeHtml(budget)}</code>, оплачено: <code>${escapeHtml(paid)}</code>, остаток: <code>${escapeHtml(balanceStars)}</code>`
+    );
+  });
+
+  await replyHtml(ctx, lines.join('\n\n'));
+});
+
+bot.command('ban', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  const raw = (ctx.message?.text || '').replace(/^\/ban(@\w+)?/i, '').trim();
+  if (!raw) {
+    await replyHtml(ctx, 'Использование: /ban &lt;tg_id&gt;');
+    return;
+  }
+
+  const targetId = raw.split(/\s+/)[0];
+  if (!/^\d{1,20}$/.test(targetId)) {
+    await replyHtml(ctx, 'Укажите Telegram ID цифрами.');
+    return;
+  }
+
+  try {
+    await setAdvertiserBlocked(targetId, true);
+    const advertiser = await getAdvertiser(targetId);
+    const label = formatAdvertiserLabel(advertiser, targetId);
+    await replyHtml(ctx, `Пользователь <code>${escapeHtml(label)}</code> заблокирован.`);
+  } catch (error) {
+    console.error('[BAN] failed:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось заблокировать пользователя.');
+  }
+});
 
 bot.command('admin_offers', async (ctx) => {
   if (!isAdmin(ctx)) {
@@ -461,11 +962,57 @@ bot.start(async (ctx) => {
   );
 });
 
+const ADMIN_ADS_CALLBACK_PREFIX = 'admin_ads:';
+const ADMIN_ADS_STANDARD = `${ADMIN_ADS_CALLBACK_PREFIX}standard`;
+const ADMIN_ADS_SKIP = `${ADMIN_ADS_CALLBACK_PREFIX}skip`;
+
 bot.command('ads', async (ctx) => {
   logUpdate(ctx, 'ads');
+
+  const advertiser = await ensureAdvertiserFromContext(ctx);
+  if (advertiser?.blocked) {
+    await replyHtml(ctx, '⛔️ Ваша учётная запись заблокирована. Обратитесь к администратору.');
+    return;
+  }
+
+  if (isAdmin(ctx)) {
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('Стандартный мастер', ADMIN_ADS_STANDARD)],
+      [Markup.button.callback('Создать без оплаты', ADMIN_ADS_SKIP)],
+    ]);
+    await replyHtml(ctx, 'Выберите режим создания оффера:', { reply_markup: keyboard });
+    return;
+  }
+
   try {
     await startAdsWizard(ctx);
     console.log('[ADS] wizard started');
+  } catch (error) {
+    console.error('[ADS] start error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось запустить мастер: <code>' + escapeHtml(error?.message || error) + '</code>');
+  }
+});
+
+bot.action([ADMIN_ADS_STANDARD, ADMIN_ADS_SKIP], async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.answerCbQuery('Недостаточно прав', { show_alert: true }).catch(() => {});
+    return;
+  }
+
+  const mode = ctx.callbackQuery?.data;
+  await ctx.answerCbQuery().catch(() => {});
+
+  const advertiser = await ensureAdvertiserFromContext(ctx);
+  if (advertiser?.blocked) {
+    await replyHtml(ctx, '⛔️ Администратор заблокирован для создания офферов.');
+    return;
+  }
+
+  const init = mode === ADMIN_ADS_SKIP ? { adminSkipPayment: true } : {};
+
+  try {
+    await startAdsWizard(ctx, init);
+    console.log('[ADS] wizard started (admin, skipPayment=%s)', mode === ADMIN_ADS_SKIP);
   } catch (error) {
     console.error('[ADS] start error:', error?.message || error);
     await replyHtml(ctx, 'Не удалось запустить мастер: <code>' + escapeHtml(error?.message || error) + '</code>');

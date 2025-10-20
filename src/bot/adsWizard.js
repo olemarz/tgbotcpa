@@ -879,7 +879,8 @@ async function finalizeWizardAfterSlug(ctx, unique) {
     finalizeCtx = fallbackCtx;
   }
 
-  await finalizeOfferAndInvoiceStars(finalizeCtx, form);
+  const skipPayment = Boolean(ctx.scene?.state?.adminSkipPayment || ctx.scene?.state?.skipPayment);
+  await finalizeOfferAndInvoiceStars(finalizeCtx, form, { skipPayment });
   try {
     await ctx.scene.leave();
   } catch {}
