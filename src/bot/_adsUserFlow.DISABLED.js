@@ -349,14 +349,14 @@ async function ensureAttribution(offerId, tgId) {
 
 async function registerJoinConversion({ offerId, tgId, attribution }) {
   const existingEvent = await query(
-    `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND type = $3 LIMIT 1`,
+    `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND event_type = $3 LIMIT 1`,
     [offerId, tgId, JOIN_GROUP_EVENT]
   );
   if (existingEvent.rowCount) {
     return { already: true };
   }
 
-  await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offerId, tgId, JOIN_GROUP_EVENT]);
+  await query(`INSERT INTO events(offer_id, tg_id, event_type) VALUES($1,$2,$3)`, [offerId, tgId, JOIN_GROUP_EVENT]);
   await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attribution.click_id]);
 
   try {

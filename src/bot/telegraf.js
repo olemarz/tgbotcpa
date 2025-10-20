@@ -3,8 +3,8 @@ import 'dotenv/config';
 import { Telegraf, Scenes, session } from 'telegraf';
 
 import { query } from '../db/index.js';
-import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
+import { recordEvent } from '../services/events.js';
 import { joinCheck } from '../services/joinCheck.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
@@ -492,32 +492,33 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   if (!res.rowCount) return;
 
   const { click_id: attrClickId, offer_id, uid } = res.rows[0];
-  const existing = await query(
-    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
-    [offer_id, tgId, JOIN_GROUP_EVENT],
-  );
-  if (existing.rowCount) {
-    await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
-    return;
-  }
-
-  await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offer_id, tgId, JOIN_GROUP_EVENT]);
-  const updated = await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
-
-  if (!updated.rowCount) {
-    return;
-  }
-
+  let created = false;
   try {
-    await sendPostback({
-      offer_id,
-      tg_id: tgId,
-      uid,
-      click_id: attrClickId,
-      event: JOIN_GROUP_EVENT,
+    const result = await recordEvent({
+      offerId: offer_id,
+      tgId,
+      eventType: JOIN_GROUP_EVENT,
+      payload: {
+        source: 'telegram.chat_member',
+        chat: {
+          id: upd?.chat?.id ?? null,
+          type: upd?.chat?.type ?? null,
+        },
+        inviter_id: upd?.from?.id ?? null,
+        status,
+      },
+      clickId: attrClickId ?? undefined,
+      postbackClickId: attrClickId ?? undefined,
+      uid: uid ?? undefined,
     });
+    created = result?.created ?? false;
   } catch (error) {
-    console.error('postback error:', error?.message || error);
+    console.error('recordEvent error:', error?.message || error);
+    created = error?.eventCreated === true;
+  }
+
+  if (!created) {
+    return;
   }
 
   try {

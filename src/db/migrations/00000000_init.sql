@@ -53,12 +53,26 @@ CREATE TABLE IF NOT EXISTS events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   offer_id uuid NOT NULL,
   tg_id bigint NOT NULL,
-  type text NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz DEFAULT now()
 );
 
+ALTER TABLE events ADD COLUMN IF NOT EXISTS type text;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type text;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS payload jsonb;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS tg_id bigint;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
+
+UPDATE events SET event_type = COALESCE(event_type, type);
+UPDATE events SET event_type = 'join_group' WHERE event_type IS NULL;
+ALTER TABLE events ALTER COLUMN event_type SET NOT NULL;
+
+UPDATE events SET payload = COALESCE(payload, '{}'::jsonb);
+ALTER TABLE events ALTER COLUMN payload SET DEFAULT '{}'::jsonb;
+ALTER TABLE events ALTER COLUMN payload SET NOT NULL;
+
+ALTER TABLE events DROP COLUMN IF EXISTS type;
 
 CREATE INDEX IF NOT EXISTS idx_events_tg ON events(tg_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_offer ON events(offer_id, created_at DESC);
