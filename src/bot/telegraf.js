@@ -14,7 +14,7 @@ import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
 import { listAllOffers } from '../db/offers.js';
-import { sendPostbackForEvent } from '../utils/postbackSender.js';
+import { sendPostbackForEvent } from '../services/postback.js';
 
 console.log('[BOOT] telegraf init');
 

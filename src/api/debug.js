@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import pool from '../db/pool.js';
 import { v4 as uuid } from 'uuid';
-import { sendPostbackForEvent } from '../utils/postbackSender.js';
+import { sendPostbackForEvent } from '../services/postback.js';
 
 const router = Router();
 const q = (s, p=[]) => pool.query(s, p);
