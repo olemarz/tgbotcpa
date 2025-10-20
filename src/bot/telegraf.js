@@ -209,6 +209,70 @@ bot.use(async (ctx, next) => {
 
 const JOIN_GROUP_EVENT = 'join_group';
 
+async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
+  const normalizedUid = uid ?? null;
+  const params = [clickId, offerId, normalizedUid, tgId];
+  const insertSql = `
+    INSERT INTO attribution (click_id, offer_id, uid, tg_id, state)
+    VALUES ($1, $2, $3, $4, 'started')
+    ON CONFLICT (click_id, tg_id) DO UPDATE
+      SET offer_id = EXCLUDED.offer_id,
+          uid = EXCLUDED.uid,
+          state = EXCLUDED.state,
+          created_at = NOW()
+  `;
+
+  try {
+    await query(insertSql, params);
+    console.log('[ATTR] linked', {
+      click_id: clickId,
+      offer_id: offerId,
+      uid: normalizedUid,
+      tg_id: tgId,
+    });
+    return;
+  } catch (error) {
+    if (error?.code !== '42P10' && error?.code !== '42704') {
+      throw error;
+    }
+  }
+
+  let updated = false;
+  try {
+    const res = await query(
+      `UPDATE attribution SET offer_id=$2, uid=$3, state='started', created_at=NOW()
+       WHERE click_id=$1 AND tg_id=$4`,
+      params,
+    );
+    updated = res.rowCount > 0;
+  } catch (updateError) {
+    if (updateError?.code !== '42703') {
+      throw updateError;
+    }
+    const res = await query(
+      `UPDATE attribution SET offer_id=$2, uid=$3, state='started'
+       WHERE click_id=$1 AND tg_id=$4`,
+      params,
+    );
+    updated = res.rowCount > 0;
+  }
+
+  if (!updated) {
+    await query(
+      `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state)
+       VALUES ($1, $2, $3, $4, 'started')`,
+      params,
+    );
+  }
+
+  console.log('[ATTR] linked', {
+    click_id: clickId,
+    offer_id: offerId,
+    uid: normalizedUid,
+    tg_id: tgId,
+  });
+}
+
 bot.start(async (ctx) => {
   logUpdate(ctx, 'start');
   const payload = typeof ctx.startPayload === 'string' ? ctx.startPayload.trim() : '';
@@ -281,10 +345,15 @@ export async function handleStartWithToken(ctx, rawToken) {
     return;
   }
 
-  await query(
-    `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1,$2,$3,$4,'started')`,
-    [click_id, offer_id, uid ?? null, tgId],
-  );
+  try {
+    await linkAttributionRow({ clickId: click_id, offerId: offer_id, uid, tgId });
+  } catch (error) {
+    console.error('[ATTR] failed to link', error?.message || error, {
+      click_id,
+      offer_id,
+      tg_id: tgId,
+    });
+  }
 
   if (event_type === JOIN_GROUP_EVENT && target_url) {
     await replyHtml(
