@@ -1,0 +1,23 @@
+# Project Context and Invariants
+
+- **Tech stack**: Node.js (ESM), Telegraf, Express, PostgreSQL, PM2, Nginx, GitHub Actions.
+- **Source layout**:
+  - `/src/api` — Express routes (`click`, `debug`, `postbacks`).
+  - `/src/bot` — Bot logic (`telegraf.js`, `adsWizard.js`, `html.js`, `paymentsStars.js`).
+  - `/src/db` — Migrations and SQL utilities.
+  - `/src/utils` — Helpers (`pricing.js`, `postbackSender.js`, `postbackTarget.js`).
+- **Configuration**:
+  - `.env` must define `PORT=8000`; webhook is exposed at `/bot/webhook`.
+  - PostgreSQL connection string provided via `.env` as `DATABASE_URL`.
+- **Feature flags**:
+  - `STARS_ENABLED=true|false` — toggles billing in stars.
+  - `PAYMENTS_DISABLED=true|false` — when true, invoices are skipped and only offers are created.
+- **Default postback settings** (sourced from `.env`):
+  - `POSTBACK_URL`
+  - `POSTBACK_METHOD=GET|POST`
+  - `POSTBACK_SECRET` (optional, HMAC)
+  - `POSTBACK_TIMEOUT_MS=5000`
+  - `POSTBACK_MAX_RETRIES=5`
+- **Geo markup**: `GEO_MARKUP_PERCENT_JSON={"US":30,"GB":30,"CA":30}`.
+- **Allowed Telegram updates**: `["chat_member","chat_join_request","message_reaction","message_reaction_count","poll_answer","message","channel_post"]`.
+- **Target events**: `join_group`, `subscribe`, `comment`, `poll_vote`, `share`, `reaction`, `miniapp_start`, `external_bot_start`.
