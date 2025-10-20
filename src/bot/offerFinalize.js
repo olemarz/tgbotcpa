@@ -3,7 +3,6 @@ import { config } from '../config.js';
 import { adjustPayoutCents } from '../util/pricing.js';
 import { centsToXtr } from '../util/xtr.js';
 import { replyHtml } from './html.js';
-import { buildTrackingUrl } from '../utils/tracking-link.js';
 import { sendStarsInvoice } from './paymentsStars.js';
 import { centsToCurrency } from '../services/offerStats.js';
 
@@ -236,5 +235,7 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}, options = {})
     payout_cents: payoutAdjusted,
     budget_cents: offer.budget_cents,
     budget_xtr: offer.budget_xtr,
+    tracking_uid: ctx.from?.id ?? null,
+    base_url: config.baseUrl || process.env.BASE_URL || '',
   };
 }
