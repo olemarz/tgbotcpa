@@ -18,12 +18,29 @@ CREATE TABLE IF NOT EXISTS events (
   id               bigserial PRIMARY KEY,
   offer_id         bigint NOT NULL REFERENCES offers(id),
   tg_id            bigint NOT NULL,
-  event            text NOT NULL,
+  event_type       text NOT NULL,
+  payload          jsonb NOT NULL DEFAULT '{}'::jsonb,
   is_premium       boolean NOT NULL DEFAULT false,
-  meta             jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at       timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS events_offer_event_idx ON events(offer_id, event, created_at DESC);
+
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event text;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type text;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS meta jsonb;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS payload jsonb;
+
+UPDATE events SET event_type = COALESCE(event_type, event);
+UPDATE events SET event_type = 'join_group' WHERE event_type IS NULL;
+ALTER TABLE events ALTER COLUMN event_type SET NOT NULL;
+
+UPDATE events SET payload = COALESCE(payload, meta, '{}'::jsonb);
+ALTER TABLE events ALTER COLUMN payload SET DEFAULT '{}'::jsonb;
+ALTER TABLE events ALTER COLUMN payload SET NOT NULL;
+
+ALTER TABLE events DROP COLUMN IF EXISTS event;
+ALTER TABLE events DROP COLUMN IF EXISTS meta;
+
+CREATE INDEX IF NOT EXISTS events_offer_event_idx ON events(offer_id, event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS events_tg_offer_idx   ON events(tg_id, offer_id);
 
 CREATE TABLE IF NOT EXISTS attribution (

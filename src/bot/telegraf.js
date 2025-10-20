@@ -3,8 +3,8 @@ import 'dotenv/config';
 import { Telegraf, Scenes, session } from 'telegraf';
 
 import { query } from '../db/index.js';
-import { sendPostback } from '../services/postback.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
+import { recordEvent } from '../services/events.js';
 import { joinCheck } from '../services/joinCheck.js';
 import * as attribution from '../services/attribution.js';
 import { uuid, shortToken } from '../util/id.js';
@@ -466,15 +466,31 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   }
 
   try {
-    await sendPostback({
-      offer_id,
-      tg_id: tgId,
-      uid,
-      click_id: attrClickId,
-      event: JOIN_GROUP_EVENT,
+    const result = await recordEvent({
+      offerId: offer_id,
+      tgId,
+      eventType: JOIN_GROUP_EVENT,
+      payload: {
+        source: 'telegram.chat_member',
+        chat: {
+          id: upd?.chat?.id ?? null,
+          type: upd?.chat?.type ?? null,
+        },
+        inviter_id: upd?.from?.id ?? null,
+        status,
+      },
+      clickId: attrClickId ?? undefined,
+      postbackClickId: attrClickId ?? undefined,
+      uid: uid ?? undefined,
     });
+    created = result?.created ?? false;
   } catch (error) {
-    console.error('postback error:', error?.message || error);
+    console.error('recordEvent error:', error?.message || error);
+    created = error?.eventCreated === true;
+  }
+
+  if (!created) {
+    return;
   }
 
   try {
