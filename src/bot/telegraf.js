@@ -15,6 +15,7 @@ import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
 import { listAllOffers } from '../db/offers.js';
 import { sendPostbackForEvent } from '../services/postback.js';
+import { retryFailedPostbacksForSlug } from '../services/postbackRetry.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -320,6 +321,110 @@ bot.command('admin_offers', async (ctx) => {
     .join('\n\n');
 
   return ctx.reply(lines, { parse_mode: 'HTML', disable_web_page_preview: true });
+});
+
+bot.command('admin_postbacks_retry', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.reply('403');
+  }
+
+  const text = String(ctx.message?.text || '');
+  const match = text.match(/^\/admin_postbacks_retry(?:@[\w_]+)?\s+(\S+)(?:\s+(\d+))?/i);
+
+  if (!match) {
+    await replyHtml(
+      ctx,
+      'Формат: <code>/admin_postbacks_retry &lt;slug&gt; [limit]</code> — перезапускает последние неуспешные попытки (limit ≤ 50).',
+    );
+    return;
+  }
+
+  const [, slug, limitRaw] = match;
+
+  try {
+    const result = await retryFailedPostbacksForSlug({ slug, limit: limitRaw });
+
+    if (!result.ok) {
+      if (result.reason === 'offer_not_found') {
+        await replyHtml(ctx, `Оффер <b>${slug}</b> не найден.`);
+        return;
+      }
+
+      await replyHtml(
+        ctx,
+        'Формат: <code>/admin_postbacks_retry &lt;slug&gt; [limit]</code> — укажи slug оффера.',
+      );
+      return;
+    }
+
+    const retries = result.retries;
+
+    if (!retries.length) {
+      await replyHtml(ctx, `Для <b>${slug}</b> нет неуспешных постбеков.`);
+      return;
+    }
+
+    const stats = {
+      success: 0,
+      failed: 0,
+      skipped: 0,
+      errored: 0,
+    };
+
+    const lines = retries.map((entry, idx) => {
+      if (entry.error) {
+        stats.errored += 1;
+        return `🚫 ${idx + 1}. <code>${entry.postbackId}</code> — ошибка: <code>${entry.error}</code>`;
+      }
+
+      if (entry.skipped) {
+        stats.skipped += 1;
+      } else if (typeof entry.status === 'number' && entry.status >= 200 && entry.status < 300) {
+        stats.success += 1;
+      } else {
+        stats.failed += 1;
+      }
+
+      const prefix = entry.error
+        ? '🚫'
+        : entry.skipped
+        ? '⚠️'
+        : typeof entry.status === 'number' && entry.status >= 200 && entry.status < 300
+        ? '✅'
+        : '❌';
+
+      const statusLabel = entry.skipped
+        ? 'skipped'
+        : entry.status == null
+        ? 'null'
+        : String(entry.status);
+
+      const attemptLabel = entry.previousAttempt
+        ? `${entry.previousAttempt}→${entry.attempt}`
+        : String(entry.attempt);
+
+      const tgSegment = entry.tgId ? ` tg:<code>${entry.tgId}</code>` : '';
+
+      return (
+        `${prefix} ${idx + 1}. event <code>${entry.eventId}</code>${tgSegment} — HTTP <b>${statusLabel}</b> ` +
+        `(попытка ${attemptLabel})`
+      );
+    });
+
+    const summary = [
+      `<b>${slug}</b>: перезапусков — <b>${retries.length}</b>`,
+      `✅ 2xx: <b>${stats.success}</b>`,
+      `❌ ошибки: <b>${stats.failed}</b>`,
+    ];
+
+    if (stats.skipped) summary.push(`⚠️ пропущено: <b>${stats.skipped}</b>`);
+    if (stats.errored) summary.push(`🚫 без события: <b>${stats.errored}</b>`);
+
+    await replyHtml(ctx, `${summary.join('\n')}\n\n${lines.join('\n')}`);
+  } catch (error) {
+    console.error('[admin_postbacks_retry] failed', error);
+    await ctx.reply(`Ошибка: ${error?.message || 'postback retry failed'}`);
+  }
 });
 
 bot.command('offer_status', async (ctx) => {

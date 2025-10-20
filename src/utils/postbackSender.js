@@ -7,12 +7,12 @@ function hmac(secret, payload) {
 }
 
 /**
- * sendPostbackForEvent({ offer, click, event })
+ * sendPostbackForEvent({ offer, click, event, attempt })
  *  offer: { id, postback_url?, postback_method?, postback_secret?, postback_timeout_ms? }
  *  click: { id|click_id, uid } | null
  *  event: { id, event|event_type, tg_id, created_at }
  */
-export async function sendPostbackForEvent({ offer, click, event }) {
+export async function sendPostbackForEvent({ offer, click, event, attempt }) {
   const baseUrl =
     (offer?.postback_url && String(offer.postback_url).trim()) ||
     config?.postback?.url ||
@@ -45,15 +45,16 @@ export async function sendPostbackForEvent({ offer, click, event }) {
 
   if (secret) params.set('sig', hmac(secret, params.toString()));
 
+  const payloadString = params.toString();
   let url = baseUrl;
   /** @type {RequestInit} */
   const opts = { method, redirect: 'follow', headers: {} };
 
   if (method === 'GET') {
-    url += (url.includes('?') ? '&' : '?') + params.toString();
+    url += (url.includes('?') ? '&' : '?') + payloadString;
   } else {
     opts.headers['content-type'] = 'application/x-www-form-urlencoded';
-    opts.body = params.toString();
+    opts.body = payloadString;
   }
 
   const t0 = Date.now();
@@ -69,14 +70,48 @@ export async function sendPostbackForEvent({ offer, click, event }) {
     body = String(e?.message || e);
   }
 
+  const attemptNumber = Number.isInteger(attempt) && attempt > 0 ? Number(attempt) : 1;
+
   try {
     await query(
-      `INSERT INTO postbacks (offer_id, event_id, url, method, status_code, response_ms, response_body, attempt)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [offer.id, event?.id || null, url, method, status, Date.now() - t0, String(body).slice(0,4000), 1]
+      `INSERT INTO postbacks (offer_id, event_id, url, method, status_code, response_ms, response_body, attempt, event_type, payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        offer.id,
+        event?.id || null,
+        url,
+        method,
+        status,
+        Date.now() - t0,
+        String(body).slice(0,4000),
+        attemptNumber,
+        event?.event_type || event?.event || null,
+        payloadString,
+      ]
     );
   } catch (e) {
-    console.warn('[postback] log failed:', e?.message || e);
+    if (e?.code === '42703') {
+      try {
+        await query(
+          `INSERT INTO postbacks (offer_id, event_id, payload, event_type, http_status, status, error, attempt)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            offer.id,
+            event?.id || null,
+            payloadString,
+            event?.event_type || event?.event || null,
+            status,
+            status >= 200 && status < 300 ? 'ok' : 'failed',
+            String(body).slice(0,4000),
+            attemptNumber,
+          ]
+        );
+      } catch (legacyError) {
+        console.warn('[postback] legacy log failed:', legacyError?.message || legacyError);
+      }
+    } else {
+      console.warn('[postback] log failed:', e?.message || e);
+    }
   }
 
   if (status < 200 || status >= 300) {
