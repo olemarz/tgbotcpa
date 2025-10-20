@@ -159,7 +159,8 @@ async function resolveOfferContext(tgId) {
   }
 
   const result = await query(
-    `SELECT a.offer_id, a.user_id, a.click_id, a.uid, o.postback_url
+    `SELECT a.offer_id, a.user_id, a.click_id, a.uid,
+            o.postback_url, o.postback_secret, o.postback_method, o.postback_timeout_ms, o.postback_retries
        FROM attribution a
        LEFT JOIN offers o ON o.id = a.offer_id
       WHERE a.tg_id = $1
@@ -179,6 +180,10 @@ async function resolveOfferContext(tgId) {
     clickId: row.click_id ?? null,
     uid: row.uid ?? null,
     postbackUrl: row.postback_url ?? null,
+    postbackSecret: row.postback_secret ?? null,
+    postbackMethod: row.postback_method ?? null,
+    postbackTimeoutMs: row.postback_timeout_ms ?? null,
+    postbackRetries: row.postback_retries ?? null,
   };
 }
 
@@ -222,14 +227,31 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
     }),
   );
 
+  const offerForPostback = {
+    id: context.offerId,
+    postback_url: context.postbackUrl ?? null,
+    postback_secret: context.postbackSecret ?? null,
+    postback_method: context.postbackMethod ?? null,
+    postback_timeout_ms: context.postbackTimeoutMs ?? null,
+    postback_retries: context.postbackRetries ?? null,
+  };
+
+  const clickForPostback = context.clickId
+    ? { id: context.clickId, click_id: context.clickId, uid: context.uid ?? null }
+    : null;
+
+  const eventForPostback = {
+    id: inserted.id,
+    event_type: eventType,
+    tg_id: tgId,
+    created_at: new Date(),
+  };
+
   await withEventError(`sendPostbackForEvent:${eventType}`, () =>
     sendPostbackForEvent({
-      offerId: context.offerId,
-      eventType,
-      tgId,
-      clickId: context.clickId ?? null,
-      uid: context.uid ?? null,
-      postbackUrl: context.postbackUrl ?? null,
+      offer: offerForPostback,
+      click: clickForPostback,
+      event: eventForPostback,
     }),
   );
 
