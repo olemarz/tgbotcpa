@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db/pool.js';
 import { v4 as uuid } from 'uuid';
 import { sendPostbackForEvent } from '../services/postback.js';
+import { propagateSuspectAttributionMeta } from '../services/antifraud.js';
 
 const router = Router();
 const q = (s, p=[]) => pool.query(s, p);
@@ -30,6 +31,8 @@ router.get('/debug/sim-start', async (req, res) => {
         state='started',
         last_seen = now()
     `, [tgId, click.offer_id, click.uid || null, tgId, click.id]);
+
+    await propagateSuspectAttributionMeta({ clickId: click.id, offerId: click.offer_id, tgId });
 
     res.json({ ok:true, offer_id: click.offer_id, tg_id: tgId, click_id: click.id });
   } catch (e) {
@@ -63,9 +66,16 @@ router.post('/debug/event', async (req, res) => {
 
     try {
       await sendPostbackForEvent({
-        offer: { id: offerId, postback_url: process.env.POSTBACK_URL || null, postback_secret: process.env.POSTBACK_SECRET || null },
+        offer: {
+          id: offerId,
+          postback_url: process.env.POSTBACK_URL || null,
+          postback_secret: process.env.POSTBACK_SECRET || null,
+          postback_method: process.env.POSTBACK_METHOD || null,
+          postback_timeout_ms: process.env.POSTBACK_TIMEOUT_MS || null,
+          postback_retries: process.env.POSTBACK_RETRIES || null,
+        },
         click,
-        event: { id: evId, event_type: ev, tg_id: tgId, created_at: new Date() }
+        event: { id: evId, event_type: ev, tg_id: tgId, created_at: new Date() },
       });
     } catch (e) {
       console.warn('[DEBUG event] postback failed', e.message || e);

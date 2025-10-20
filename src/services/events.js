@@ -1,6 +1,11 @@
 import { query } from '../db/index.js';
 import { attachEvent } from './attribution.js';
 import { sendPostback } from './postback.js';
+import {
+  hasSuspectAttribution,
+  shouldBlockPrimaryEvent,
+  shouldDebounceReaction,
+} from './antifraud.js';
 
 const ALLOWED_EVENT_TYPES = new Set([
   'join_group',
@@ -30,7 +35,11 @@ async function findExistingEvent({ offerId, tgId, eventType }) {
   const existing = await query(
     `SELECT id
        FROM events
-      WHERE offer_id = $1 AND tg_id = $2 AND event_type = $3
+      WHERE offer_id = $1
+        AND tg_id = $2
+        AND event_type = $3
+        AND created_at >= date_trunc('day', now())
+      ORDER BY created_at DESC
       LIMIT 1`,
     [offerId, tgId, eventType],
   );
@@ -65,6 +74,42 @@ export async function recordEvent({
 }) {
   ensureValidEventType(eventType);
   const normalizedPayload = normalizePayload(payload);
+
+  if (
+    await hasSuspectAttribution({ offerId, tgId, clickId: clickId ?? null })
+  ) {
+    console.warn('[events] skip suspect attribution', { offerId, tgId, eventType, clickId });
+    return { eventId: null, created: false, postback: null, attachment: null, blocked: { reason: 'suspect_ip' } };
+  }
+
+  if (await shouldBlockPrimaryEvent({ offerId, tgId, eventType })) {
+    console.warn('[events] daily cap reached for primary event', { offerId, tgId, eventType });
+    return {
+      eventId: null,
+      created: false,
+      postback: null,
+      attachment: null,
+      blocked: { reason: 'primary_cap' },
+    };
+  }
+
+  if (
+    eventType === 'reaction' &&
+    (await shouldDebounceReaction({
+      offerId,
+      tgId,
+      messageId: normalizedPayload?.message_id ?? null,
+    }))
+  ) {
+    console.warn('[events] reaction debounced', { offerId, tgId, message_id: normalizedPayload?.message_id });
+    return {
+      eventId: null,
+      created: false,
+      postback: null,
+      attachment: null,
+      blocked: { reason: 'reaction_debounce' },
+    };
+  }
 
   const existing = await findExistingEvent({ offerId, tgId, eventType });
 

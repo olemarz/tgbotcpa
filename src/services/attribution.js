@@ -1,5 +1,6 @@
 // src/services/attribution.js
 import pool from '../db/pool.js';
+import { propagateSuspectAttributionMeta } from './antifraud.js';
 
 const query = (sql, params=[]) => pool.query(sql, params);
 
@@ -17,6 +18,7 @@ export async function upsertAttribution({ user_id, offer_id, uid=null, tg_id=nul
           last_seen = now();
   `;
   await query(sql, [user_id, offer_id, uid, tg_id, click_id, state]);
+  await propagateSuspectAttributionMeta({ clickId: click_id, offerId: offer_id, tgId: tg_id });
   return { ok: true };
 }
 
@@ -31,5 +33,6 @@ export async function attachEvent({ offerId, tgId, clickId=null, uid=null }) {
      WHERE user_id=$1 AND offer_id=$2
   `;
   await query(sql, [tgId, offerId, clickId, uid]);
+  await propagateSuspectAttributionMeta({ clickId, offerId, tgId });
   return { ok: true };
 }

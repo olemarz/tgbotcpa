@@ -1,6 +1,6 @@
 import https from 'node:https';
 import 'dotenv/config';
-import { Telegraf, Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session, Markup } from 'telegraf';
 
 import { query } from '../db/index.js';
 import { insertEvent } from '../db/events.js';
@@ -13,8 +13,29 @@ import sessionStore from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
-import { listAllOffers } from '../db/offers.js';
+import { listAllOffers, listOffersByOwner } from '../db/offers.js';
+import {
+  upsertAdvertiser,
+  getAdvertiser,
+  setAdvertiserBlocked,
+  listAdvertisersByIds,
+} from '../db/advertisers.js';
 import { sendPostbackForEvent } from '../services/postback.js';
+import {
+  hasSuspectAttribution,
+  shouldBlockPrimaryEvent,
+  shouldDebounceReaction,
+  propagateSuspectAttributionMeta,
+} from '../services/antifraud.js';
+  centsToCurrency,
+  formatDate,
+  buildAdvertiserSummary,
+  buildAdvertiserPeriodStats,
+  buildAdminPeriodStats,
+  toRangeBoundaries,
+  fetchOfferDetail,
+  fetchPendingOffers,
+} from '../services/offerStats.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -87,6 +108,174 @@ const traceMiddleware = async (ctx, next) => {
 
 middlewares.push(traceMiddleware);
 
+const ADVERTISER_COMMANDS = Object.freeze([
+  ['/start', 'приветствие и список команд'],
+  ['/list', 'подсказка по доступным командам'],
+  ['/ads', 'запустить мастер создания оффера'],
+  ['/myoffers', 'список ваших офферов и лимитов'],
+  ['/my_offers', 'краткие метрики по офферам'],
+  ['/offer <slug>', 'подробная карточка оффера'],
+  ['/stat', 'агрегированная статистика по офферам'],
+]);
+
+const ADMIN_COMMANDS = Object.freeze([
+  ['/admin', 'список команд администратора'],
+  ['/statadm', 'статистика по всем офферам рекламодателей'],
+  ['/pending', 'подвисшие офферы без оплаты'],
+  ['/admin_offers', 'последние офферы'],
+  ['/offer_status <id> <status>', 'смена статуса оффера'],
+]);
+
+function renderCommandList(commands) {
+  return commands
+    .map(([command, description]) => `• <code>${command}</code> — ${description}`)
+    .join('\n');
+}
+
+function buildAdvertiserHelpMessage(isAdmin = false) {
+  const header =
+    '👋 Здравствуйте! Это бот для запуска рекламных кампаний. Выберите команду ниже или сразу начните с <code>/ads</code>.';
+  const userCommands = renderCommandList(ADVERTISER_COMMANDS);
+  const adminSection = isAdmin
+    ? '\n\n⚙️ Команды администратора:\n' + renderCommandList(ADMIN_COMMANDS)
+    : '';
+  const footer =
+    '\n\nЕсли у вас есть токен кампании, используйте команду <code>/claim &lt;TOKEN&gt;</code>.';
+  return `${header}\n\nДоступные команды:\n${userCommands}${adminSection}${footer}`;
+}
+
+function buildAdminHelpMessage() {
+  return '⚙️ Команды администратора:\n' + renderCommandList(ADMIN_COMMANDS);
+}
+
+function formatCaps(value) {
+  if (value === null || value === undefined) return '—';
+  const num = Number(value);
+  return Number.isFinite(num) ? String(num) : String(value);
+}
+
+function buildSpentLeftText(spentCents, leftCents) {
+  return `${centsToCurrency(spentCents)} / ${centsToCurrency(leftCents)}`;
+}
+
+function buildMyOffersDetailed(offers) {
+  if (!offers.length) {
+    return 'У вас пока нет офферов. Запустите мастер командой <code>/ads</code>.';
+  }
+
+  const lines = offers.map((offer) => {
+    const caps = formatCaps(offer.caps_total);
+    const conversions = offer.conversions_total ?? 0;
+    const premium = offer.premium_total ?? 0;
+    const spentLeft = buildSpentLeftText(offer.spent_total_cents, offer.budget_left_cents);
+    return (
+      `• <b>${offer.slug}</b> — <code>${offer.event_type}</code>\n` +
+      `  payout: <code>${centsToCurrency(offer.payout_cents)}</code>, лимит: <code>${caps}</code>\n` +
+      `  ЦД: <code>${conversions}</code>, премиум: <code>${premium}</code>\n` +
+      `  spent/left: <code>${spentLeft}</code>`
+    );
+  });
+
+  lines.push('\nОткройте карточку оффера: <code>/offer &lt;slug&gt;</code>.');
+  return lines.join('\n');
+}
+
+function buildMyOffersCompact(offers) {
+  if (!offers.length) {
+    return 'Офферов не найдено. Используйте <code>/ads</code>, чтобы создать первый оффер.';
+  }
+
+  return offers
+    .map((offer) => {
+      const spentLeft = buildSpentLeftText(offer.spent_total_cents, offer.budget_left_cents);
+      const clicks = offer.clicks_range ?? offer.clicks_total ?? 0;
+      const conversions = offer.conversions_range ?? offer.conversions_total ?? 0;
+      return `• <b>${offer.slug}</b> — клики: <code>${clicks}</code>, ЦД: <code>${conversions}</code>, расход/остаток: <code>${spentLeft}</code>`;
+    })
+    .join('\n');
+}
+
+function buildStatsSection({ label }, offers) {
+  if (!offers.length) {
+    return `📊 Период ${label}: нет данных.`;
+  }
+
+  const lines = [`📊 Период ${label}`];
+  let totalClicks = 0;
+  let totalConversions = 0;
+  let totalPremium = 0;
+  let totalSpend = 0;
+
+  for (const offer of offers) {
+    const clicks = offer.clicks_range ?? 0;
+    const conversions = offer.conversions_range ?? 0;
+    const premium = offer.premium_range ?? 0;
+    const spend = offer.spent_range_cents ?? 0;
+    totalClicks += clicks;
+    totalConversions += conversions;
+    totalPremium += premium;
+    totalSpend += spend;
+    lines.push(
+      `• <b>${offer.slug}</b> (${formatDate(offer.created_at)})\n` +
+        `  клики: <code>${clicks}</code>, ЦД: <code>${conversions}</code>, премиум: <code>${premium}</code>\n` +
+        `  стоимость: <code>${centsToCurrency(spend)}</code>, остаток: <code>${centsToCurrency(
+          offer.budget_left_cents,
+        )}</code>`
+    );
+  }
+
+  lines.push(
+    `Итого — клики: <code>${totalClicks}</code>, ЦД: <code>${totalConversions}</code>, премиум: <code>${totalPremium}</code>, ` +
+      `стоимость: <code>${centsToCurrency(totalSpend)}</code>.`,
+  );
+
+  return lines.join('\n');
+}
+
+function buildContactLink(ownerId) {
+  if (!ownerId) return '—';
+  const id = String(ownerId);
+  return `<a href="tg://user?id=${id}">${id}</a>`;
+}
+
+function buildAdminStatsSection({ label }, offers) {
+  if (!offers.length) {
+    return `📊 Период ${label}: нет офферов.`;
+  }
+
+  const lines = [`📊 Период ${label}`];
+  let totalClicks = 0;
+  let totalConversions = 0;
+  let totalPremium = 0;
+  let totalSpend = 0;
+
+  for (const offer of offers) {
+    const clicks = offer.clicks_range ?? 0;
+    const conversions = offer.conversions_range ?? 0;
+    const premium = offer.premium_range ?? 0;
+    const spend = offer.spent_range_cents ?? 0;
+    totalClicks += clicks;
+    totalConversions += conversions;
+    totalPremium += premium;
+    totalSpend += spend;
+    const contact = buildContactLink(offer.owner_id);
+    lines.push(
+      `• ${contact} — ${formatDate(offer.created_at)} — <b>${offer.slug}</b>\n` +
+        `  клики: <code>${clicks}</code>, ЦД: <code>${conversions}</code>, премиум: <code>${premium}</code>\n` +
+        `  стоимость: <code>${centsToCurrency(spend)}</code>, остаток: <code>${centsToCurrency(
+          offer.budget_left_cents,
+        )}</code>`
+    );
+  }
+
+  lines.push(
+    `Итого — клики: <code>${totalClicks}</code>, ЦД: <code>${totalConversions}</code>, премиум: <code>${totalPremium}</code>, ` +
+      `стоимость: <code>${centsToCurrency(totalSpend)}</code>.`,
+  );
+
+  return lines.join('\n');
+}
+
 for (const middleware of middlewares) {
   bot.use(middleware);
 }
@@ -103,21 +292,26 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+const ADMIN_ID_SET = (() => {
+  const ids = new Set();
+  const list = String(process.env.ADMIN_IDS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const id of list) {
+    ids.add(id);
+  }
+  const legacy = (process.env.ADMIN_TG_ID || '').trim();
+  if (legacy) {
+    ids.add(legacy);
+  }
+  return ids;
+})();
+
 function isAdmin(ctx) {
   const fromId = ctx.from?.id;
   if (fromId == null) return false;
-
-  const list = String(process.env.ADMIN_IDS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  if (list.includes(String(fromId))) {
-    return true;
-  }
-
-  const legacy = (process.env.ADMIN_TG_ID || '').trim();
-  return legacy && String(fromId) === legacy;
+  return ADMIN_ID_SET.has(String(fromId));
 }
 
 function normalizePayload(rawPayload) {
@@ -159,7 +353,8 @@ async function resolveOfferContext(tgId) {
   }
 
   const result = await query(
-    `SELECT a.offer_id, a.user_id, a.click_id, a.uid, o.postback_url
+    `SELECT a.offer_id, a.user_id, a.click_id, a.uid,
+            o.postback_url, o.postback_secret, o.postback_method, o.postback_timeout_ms, o.postback_retries
        FROM attribution a
        LEFT JOIN offers o ON o.id = a.offer_id
       WHERE a.tg_id = $1
@@ -179,6 +374,10 @@ async function resolveOfferContext(tgId) {
     clickId: row.click_id ?? null,
     uid: row.uid ?? null,
     postbackUrl: row.postback_url ?? null,
+    postbackSecret: row.postback_secret ?? null,
+    postbackMethod: row.postback_method ?? null,
+    postbackTimeoutMs: row.postback_timeout_ms ?? null,
+    postbackRetries: row.postback_retries ?? null,
   };
 }
 
@@ -199,9 +398,34 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
     uid: context.uid ?? undefined,
   });
 
+  const offerId = context.offerId;
+
+  if (await hasSuspectAttribution({ offerId, tgId, clickId: context.clickId ?? null })) {
+    console.warn('[EVENT] skipped suspect attribution', { offer_id: offerId, tg_id: tgId, event_type: eventType });
+    return;
+  }
+
+  if (await shouldBlockPrimaryEvent({ offerId, tgId, eventType })) {
+    console.warn('[EVENT] primary cap reached', { offer_id: offerId, tg_id: tgId, event_type: eventType });
+    return;
+  }
+
+  if (
+    eventType === 'reaction' &&
+    (await shouldDebounceReaction({ offerId, tgId, messageId: eventPayload?.message_id ?? null }))
+  ) {
+    console.warn('[EVENT] reaction debounced', {
+      offer_id: offerId,
+      tg_id: tgId,
+      event_type: eventType,
+      message_id: eventPayload?.message_id ?? null,
+    });
+    return;
+  }
+
   const inserted = await withEventError(`insertEvent:${eventType}`, () =>
     insertEvent({
-      offer_id: context.offerId,
+      offer_id: offerId,
       user_id: context.userId ?? tgId,
       tg_id: tgId,
       event_type: eventType,
@@ -222,18 +446,97 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
     }),
   );
 
+  const offerForPostback = {
+    id: context.offerId,
+    postback_url: context.postbackUrl ?? null,
+    postback_secret: context.postbackSecret ?? null,
+    postback_method: context.postbackMethod ?? null,
+    postback_timeout_ms: context.postbackTimeoutMs ?? null,
+    postback_retries: context.postbackRetries ?? null,
+  };
+
+  const clickForPostback = context.clickId
+    ? { id: context.clickId, click_id: context.clickId, uid: context.uid ?? null }
+    : null;
+
+  const eventForPostback = {
+    id: inserted.id,
+    event_type: eventType,
+    tg_id: tgId,
+    created_at: new Date(),
+  };
+
   await withEventError(`sendPostbackForEvent:${eventType}`, () =>
     sendPostbackForEvent({
-      offerId: context.offerId,
-      eventType,
-      tgId,
-      clickId: context.clickId ?? null,
-      uid: context.uid ?? null,
-      postbackUrl: context.postbackUrl ?? null,
+      offer: offerForPostback,
+      click: clickForPostback,
+      event: eventForPostback,
     }),
   );
 
   console.log(`[EVENT] saved ${eventType} by ${tgId} for offer ${context.offerId}`);
+}
+
+async function ensureAdvertiserFromContext(ctx) {
+  const from = ctx?.from;
+  if (!from?.id) {
+    return null;
+  }
+
+  try {
+    return await upsertAdvertiser({
+      tgId: from.id,
+      username: from.username ?? null,
+      firstName: from.first_name ?? null,
+      lastName: from.last_name ?? null,
+    });
+  } catch (error) {
+    console.error('[advertiser] failed to upsert', error?.message || error);
+    return null;
+  }
+}
+
+function safeNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function formatStarsFromCents(cents) {
+  const stars = Math.round(safeNumber(cents) / 100);
+  return `${stars}⭐`;
+}
+
+function formatCurrencyFromCents(cents) {
+  const amount = safeNumber(cents) / 100;
+  return `${amount.toFixed(2)} ₽`;
+}
+
+function formatAdvertiserLabel(row, fallbackId) {
+  if (!row) {
+    return fallbackId != null ? `tg:${fallbackId}` : '-';
+  }
+
+  let label = null;
+  if (row.contact) {
+    label = row.contact;
+  } else if (row.username) {
+    label = `@${row.username}`;
+  } else {
+    const name = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+    if (name) {
+      label = name;
+    }
+  }
+
+  if (!label || !label.trim()) {
+    label = fallbackId != null ? `tg:${fallbackId}` : '-';
+  }
+
+  if (row.blocked) {
+    label = `🚫 ${label}`;
+  }
+
+  return label;
 }
 
 function detectStartEventsFromValue(value, source) {
@@ -293,6 +596,434 @@ function detectStartEventsFromMessage(message) {
 }
 
 // ─── admin команды ────────────────────────────────────────────────────────────
+
+function startOfDay(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date, delta) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + delta);
+  return d;
+}
+
+function parseStatAdmRange(raw) {
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const defaultRange = { start: todayStart, end: addDays(todayStart, 1), label: 'today' };
+
+  if (!raw) {
+    return defaultRange;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === 'today') {
+    return defaultRange;
+  }
+
+  if (normalized === '7d' || normalized === '7') {
+    const start = addDays(todayStart, -6);
+    return { start, end: addDays(todayStart, 1), label: '7d' };
+  }
+
+  if (normalized === '30d' || normalized === '30') {
+    const start = addDays(todayStart, -29);
+    return { start, end: addDays(todayStart, 1), label: '30d' };
+  }
+
+  const matches = normalized.match(/\d{4}-\d{2}-\d{2}/g) || [];
+  if (matches.length === 0) {
+    return defaultRange;
+  }
+
+  const startDate = startOfDay(matches[0]);
+  const endDate = matches.length > 1 ? startOfDay(matches[1]) : startDate;
+
+  const [from, to] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+  return { start: from, end: addDays(to, 1), label: `${matches[0]}..${matches[matches.length - 1]}` };
+}
+
+function formatDateForDisplay(value) {
+  if (!value) return '-';
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '-';
+    }
+    return date.toISOString().slice(0, 10);
+  } catch {
+    return '-';
+  }
+}
+
+bot.command('admin', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  const lines = [
+    '<b>Команды администратора</b>',
+    '/ads — запустить мастер (стандартный или без оплаты)',
+    '/myoffers — список офферов',
+    '/statadm [today|7d|30d|YYYY-MM-DD YYYY-MM-DD] — статистика по офферам',
+    '/pending — офферы без оплаты',
+    '/ban &lt;tg_id&gt; — заблокировать рекламодателя',
+    '/admin_offers — краткий список последних офферов',
+    '/offer_status &lt;UUID&gt; &lt;status&gt; — смена статуса оффера',
+  ];
+
+  await replyHtml(ctx, lines.join('\n'));
+});
+
+bot.command('myoffers', async (ctx) => {
+  logUpdate(ctx, 'myoffers');
+  const fromId = ctx.from?.id;
+  if (fromId == null) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID.');
+    return;
+  }
+
+  const admin = isAdmin(ctx);
+  let offers;
+  try {
+    offers = admin ? await listAllOffers(200) : await listOffersByOwner(fromId);
+  } catch (error) {
+    console.error('[MYOFFERS] list error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить список офферов.');
+    return;
+  }
+
+  if (!offers?.length) {
+    await replyHtml(ctx, admin ? 'Офферов нет.' : 'У вас пока нет офферов.');
+    return;
+  }
+
+  const ownerMap = new Map();
+  if (admin) {
+    const ownerIds = Array.from(
+      new Set(
+        offers
+          .map((offer) => (offer.created_by_tg_id != null ? String(offer.created_by_tg_id) : null))
+          .filter(Boolean),
+      ),
+    );
+    if (ownerIds.length) {
+      try {
+        const owners = await listAdvertisersByIds(ownerIds);
+        for (const owner of owners) {
+          ownerMap.set(String(owner.tg_id), owner);
+        }
+      } catch (error) {
+        console.error('[MYOFFERS] advertisers load error:', error?.message || error);
+      }
+    }
+  } else {
+    const advertiser = await ensureAdvertiserFromContext(ctx);
+    ownerMap.set(String(fromId), advertiser ?? null);
+  }
+
+  const lines = offers.map((offer) => {
+    const slug = offer.slug || offer.id;
+    const status = offer.status || 'draft';
+    const payout = formatStarsFromCents(offer.payout_cents ?? 0);
+    const budget = formatStarsFromCents(offer.budget_cents ?? 0);
+    const paid = formatStarsFromCents(offer.paid_cents ?? 0);
+    const ownerLabel = admin
+      ? formatAdvertiserLabel(ownerMap.get(String(offer.created_by_tg_id)), offer.created_by_tg_id)
+      : 'вы';
+
+    const parts = [
+      `• <b>${escapeHtml(slug)}</b> — ${escapeHtml(status)}`,
+      `  payout: <code>${escapeHtml(payout)}</code>, бюджет: <code>${escapeHtml(budget)}</code>, оплачено: <code>${escapeHtml(paid)}</code>`,
+    ];
+
+    if (admin) {
+      parts.push(`  владелец: <code>${escapeHtml(ownerLabel)}</code>`);
+    }
+
+    return parts.join('\n');
+  });
+
+  await replyHtml(ctx, lines.join('\n\n'));
+});
+
+bot.command('statadm', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  const raw = (ctx.message?.text || '').replace(/^\/statadm(@\w+)?/i, '').trim();
+  const range = parseStatAdmRange(raw);
+  const params = [range.start, range.end];
+
+  let stats;
+  try {
+    const res = await query(
+      `
+      WITH click_stats AS (
+        SELECT offer_id, COUNT(*)::bigint AS clicks
+          FROM clicks
+         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+           AND ($2::timestamptz IS NULL OR created_at < $2)
+         GROUP BY offer_id
+      ),
+      event_stats AS (
+        SELECT offer_id,
+               COUNT(*)::bigint AS conversions,
+               COUNT(*) FILTER (WHERE is_premium) AS premium_conversions
+          FROM events
+         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+           AND ($2::timestamptz IS NULL OR created_at < $2)
+         GROUP BY offer_id
+      ),
+      spend_stats AS (
+        SELECT offer_id, COALESCE(SUM(amount_cents), 0)::bigint AS spend_cents
+          FROM conversions
+         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+           AND ($2::timestamptz IS NULL OR created_at < $2)
+         GROUP BY offer_id
+      )
+      SELECT
+        o.id,
+        o.slug,
+        o.created_at,
+        o.budget_cents,
+        o.paid_cents,
+        o.created_by_tg_id,
+        a.username,
+        a.first_name,
+        a.last_name,
+        a.contact,
+        a.blocked,
+        COALESCE(cs.clicks, 0) AS clicks,
+        COALESCE(es.conversions, 0) AS conversions,
+        COALESCE(es.premium_conversions, 0) AS premium_conversions,
+        COALESCE(ss.spend_cents, 0) AS spend_cents
+      FROM offers o
+      LEFT JOIN click_stats cs ON cs.offer_id = o.id
+      LEFT JOIN event_stats es ON es.offer_id = o.id
+      LEFT JOIN spend_stats ss ON ss.offer_id = o.id
+      LEFT JOIN advertisers a ON a.tg_id = o.created_by_tg_id
+      WHERE (
+        COALESCE(cs.clicks, 0) > 0
+        OR COALESCE(es.conversions, 0) > 0
+        OR COALESCE(es.premium_conversions, 0) > 0
+        OR COALESCE(ss.spend_cents, 0) > 0
+        OR (($1::timestamptz IS NOT NULL AND o.created_at >= $1) AND ($2::timestamptz IS NULL OR o.created_at < $2))
+      )
+      ORDER BY o.created_at DESC
+      LIMIT 200
+    `,
+      params,
+    );
+    stats = res.rows;
+  } catch (error) {
+    console.error('[STATADM] query error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить статистику.');
+    return;
+  }
+
+  if (!stats?.length) {
+    const fromText = formatDateForDisplay(range.start);
+    const toText = formatDateForDisplay(addDays(range.end, -1));
+    await replyHtml(ctx, `Нет данных за период ${escapeHtml(fromText)} — ${escapeHtml(toText)}.`);
+    return;
+  }
+
+  const rows = stats.map((row) => {
+    const clicks = safeNumber(row.clicks);
+    const conversions = safeNumber(row.conversions);
+    const premium = safeNumber(row.premium_conversions);
+    const spendCents = safeNumber(row.spend_cents);
+    const budgetCents = safeNumber(row.budget_cents);
+    const balanceCents = budgetCents - spendCents;
+
+    return {
+      contact: formatAdvertiserLabel(row, row.created_by_tg_id),
+      start: formatDateForDisplay(row.created_at),
+      slug: row.slug || row.id,
+      clicks,
+      conversions,
+      premium,
+      spendCents,
+      balanceCents,
+      budgetCents,
+    };
+  });
+
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.clicks += row.clicks;
+      acc.conversions += row.conversions;
+      acc.premium += row.premium;
+      acc.spendCents += row.spendCents;
+      acc.budgetCents += row.budgetCents;
+      return acc;
+    },
+    { clicks: 0, conversions: 0, premium: 0, spendCents: 0, budgetCents: 0 },
+  );
+
+  const tableRows = rows.map((row) => ({
+    contact: row.contact,
+    start: row.start,
+    slug: row.slug,
+    clicks: String(row.clicks),
+    conversions: String(row.conversions),
+    premium: String(row.premium),
+    cost: formatCurrencyFromCents(row.spendCents),
+    balance: formatCurrencyFromCents(row.balanceCents),
+  }));
+
+  tableRows.push({
+    contact: 'Итого',
+    start: '',
+    slug: '',
+    clicks: String(totals.clicks),
+    conversions: String(totals.conversions),
+    premium: String(totals.premium),
+    cost: formatCurrencyFromCents(totals.spendCents),
+    balance: formatCurrencyFromCents(totals.budgetCents - totals.spendCents),
+  });
+
+  const columns = [
+    { key: 'contact', label: 'контакт', align: 'left' },
+    { key: 'start', label: 'старт', align: 'left' },
+    { key: 'slug', label: 'slug', align: 'left' },
+    { key: 'clicks', label: 'клики', align: 'right' },
+    { key: 'conversions', label: 'цд', align: 'right' },
+    { key: 'premium', label: 'цд прем', align: 'right' },
+    { key: 'cost', label: 'стоимость', align: 'right' },
+    { key: 'balance', label: 'остаток', align: 'right' },
+  ];
+
+  const widths = columns.reduce((acc, column) => {
+    const values = tableRows.map((row) => row[column.key] ?? '');
+    const maxLength = Math.max(column.label.length, ...values.map((value) => String(value).length));
+    acc[column.key] = Math.min(maxLength, 48);
+    return acc;
+  }, {});
+
+  const formatRow = (row) =>
+    columns
+      .map((column) => {
+        const rawValue = String(row[column.key] ?? '');
+        const width = widths[column.key];
+        if (column.align === 'right') {
+          return rawValue.padStart(width);
+        }
+        return rawValue.padEnd(width);
+      })
+      .join('  ');
+
+  const headerRow = formatRow(Object.fromEntries(columns.map((column) => [column.key, column.label])));
+  const separatorRow = headerRow.replace(/./g, '─');
+  const bodyRows = tableRows.map((row) => formatRow(row));
+
+  const periodFrom = formatDateForDisplay(range.start);
+  const periodTo = formatDateForDisplay(addDays(range.end, -1));
+  const tableText = [headerRow, separatorRow, ...bodyRows].join('\n');
+
+  const message =
+    `<b>Статистика офферов</b> (${escapeHtml(periodFrom)} — ${escapeHtml(periodTo)})\n` +
+    `<pre>${escapeHtml(tableText)}</pre>`;
+
+  await replyHtml(ctx, message);
+});
+
+bot.command('pending', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  let rows;
+  try {
+    const res = await query(
+      `
+      SELECT
+        o.id,
+        o.slug,
+        o.status,
+        o.budget_cents,
+        o.paid_cents,
+        o.created_by_tg_id,
+        a.username,
+        a.first_name,
+        a.last_name,
+        a.contact,
+        a.blocked
+      FROM offers o
+      LEFT JOIN advertisers a ON a.tg_id = o.created_by_tg_id
+      WHERE COALESCE(o.budget_cents, 0) > 0
+        AND COALESCE(o.paid_cents, 0) < COALESCE(o.budget_cents, 0)
+      ORDER BY o.created_at DESC
+      LIMIT 100
+    `,
+      [],
+    );
+    rows = res.rows;
+  } catch (error) {
+    console.error('[PENDING] query error:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить список офферов.');
+    return;
+  }
+
+  if (!rows?.length) {
+    await replyHtml(ctx, 'Нет неподтверждённых офферов.');
+    return;
+  }
+
+  const lines = rows.map((row) => {
+    const slug = row.slug || row.id;
+    const status = row.status || 'draft';
+    const budget = formatStarsFromCents(row.budget_cents ?? 0);
+    const paid = formatStarsFromCents(row.paid_cents ?? 0);
+    const remainingCents = Math.max(0, safeNumber(row.budget_cents) - safeNumber(row.paid_cents));
+    const balanceStars = formatStarsFromCents(remainingCents);
+    const owner = formatAdvertiserLabel(row, row.created_by_tg_id);
+
+    return (
+      `• <b>${escapeHtml(slug)}</b> — ${escapeHtml(status)}\n` +
+      `  владелец: <code>${escapeHtml(owner)}</code>\n` +
+      `  бюджет: <code>${escapeHtml(budget)}</code>, оплачено: <code>${escapeHtml(paid)}</code>, остаток: <code>${escapeHtml(balanceStars)}</code>`
+    );
+  });
+
+  await replyHtml(ctx, lines.join('\n\n'));
+});
+
+bot.command('ban', async (ctx) => {
+  if (!isAdmin(ctx)) {
+    await ctx.reply('403');
+    return;
+  }
+
+  const raw = (ctx.message?.text || '').replace(/^\/ban(@\w+)?/i, '').trim();
+  if (!raw) {
+    await replyHtml(ctx, 'Использование: /ban &lt;tg_id&gt;');
+    return;
+  }
+
+  const targetId = raw.split(/\s+/)[0];
+  if (!/^\d{1,20}$/.test(targetId)) {
+    await replyHtml(ctx, 'Укажите Telegram ID цифрами.');
+    return;
+  }
+
+  try {
+    await setAdvertiserBlocked(targetId, true);
+    const advertiser = await getAdvertiser(targetId);
+    const label = formatAdvertiserLabel(advertiser, targetId);
+    await replyHtml(ctx, `Пользователь <code>${escapeHtml(label)}</code> заблокирован.`);
+  } catch (error) {
+    console.error('[BAN] failed:', error?.message || error);
+    await replyHtml(ctx, 'Не удалось заблокировать пользователя.');
+  }
+});
 
 bot.command('admin_offers', async (ctx) => {
   if (!isAdmin(ctx)) {
@@ -363,7 +1094,7 @@ export function logUpdate(ctx, tag = 'update') {
   });
 }
 
-registerStatHandlers(bot, { logUpdate });
+registerStatHandlers(bot, { logUpdate, enableCommand: false });
 
 // сброс ожиданий при слэш-командах
 bot.use(async (ctx, next) => {
@@ -396,14 +1127,10 @@ async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
           created_at = NOW()
   `;
 
+  let linked = false;
   try {
     await query(insertSql, params);
-    console.log('[ATTR] linked', {
-      offer_id: offerId,
-      click_id: clickId,
-      tg_id: tgId,
-    });
-    return;
+    linked = true;
   } catch (error) {
     if (error?.code !== '42P10' && error?.code !== '42704') {
       throw error;
@@ -436,13 +1163,17 @@ async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
        VALUES ($1, $2, $3, $4, 'started')`,
       params,
     );
+    linked = true;
   }
 
-  console.log('[ATTR] linked', {
-    offer_id: offerId,
-    click_id: clickId,
-    tg_id: tgId,
-  });
+  if (linked || updated) {
+    await propagateSuspectAttributionMeta({ clickId, offerId, tgId });
+    console.log('[ATTR] linked', {
+      offer_id: offerId,
+      click_id: clickId,
+      tg_id: tgId,
+    });
+  }
 }
 
 bot.start(async (ctx) => {
@@ -454,15 +1185,33 @@ bot.start(async (ctx) => {
     return;
   }
 
-  await replyHtml(
-    ctx,
-    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:\n' +
-      '<code>/claim &lt;TOKEN&gt;</code>',
-  );
+  const admin = isAdmin(ctx);
+  const message = buildAdvertiserHelpMessage(admin);
+  await replyHtml(ctx, message);
 });
+
+const ADMIN_ADS_CALLBACK_PREFIX = 'admin_ads:';
+const ADMIN_ADS_STANDARD = `${ADMIN_ADS_CALLBACK_PREFIX}standard`;
+const ADMIN_ADS_SKIP = `${ADMIN_ADS_CALLBACK_PREFIX}skip`;
 
 bot.command('ads', async (ctx) => {
   logUpdate(ctx, 'ads');
+
+  const advertiser = await ensureAdvertiserFromContext(ctx);
+  if (advertiser?.blocked) {
+    await replyHtml(ctx, '⛔️ Ваша учётная запись заблокирована. Обратитесь к администратору.');
+    return;
+  }
+
+  if (isAdmin(ctx)) {
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('Стандартный мастер', ADMIN_ADS_STANDARD)],
+      [Markup.button.callback('Создать без оплаты', ADMIN_ADS_SKIP)],
+    ]);
+    await replyHtml(ctx, 'Выберите режим создания оффера:', { reply_markup: keyboard });
+    return;
+  }
+
   try {
     await startAdsWizard(ctx);
     console.log('[ADS] wizard started');
@@ -470,6 +1219,238 @@ bot.command('ads', async (ctx) => {
     console.error('[ADS] start error:', error?.message || error);
     await replyHtml(ctx, 'Не удалось запустить мастер: <code>' + escapeHtml(error?.message || error) + '</code>');
   }
+});
+
+bot.command('list', async (ctx) => {
+  logUpdate(ctx, 'list');
+  const admin = isAdmin(ctx);
+  const userCommands = renderCommandList(ADVERTISER_COMMANDS);
+  const adminSection = admin ? '\n\n⚙️ Команды администратора:\n' + renderCommandList(ADMIN_COMMANDS) : '';
+  await replyHtml(ctx, `📋 Доступные команды:\n${userCommands}${adminSection}`);
+});
+
+bot.command('admin', async (ctx) => {
+  logUpdate(ctx, 'admin');
+  if (!isAdmin(ctx)) {
+    await replyHtml(ctx, '⛔️ Команда доступна только администраторам.');
+    return;
+  }
+  await replyHtml(ctx, buildAdminHelpMessage());
+});
+
+bot.command('myoffers', async (ctx) => {
+  logUpdate(ctx, 'myoffers');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  const offers = await buildAdvertiserSummary(tgId);
+  const message = buildMyOffersDetailed(offers);
+  await replyHtml(ctx, message);
+});
+
+bot.command('my_offers', async (ctx) => {
+  logUpdate(ctx, 'my_offers');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  const offers = await buildAdvertiserPeriodStats(tgId);
+  const message = buildMyOffersCompact(offers);
+  await replyHtml(ctx, message);
+});
+
+bot.command('offer', async (ctx) => {
+  logUpdate(ctx, 'offer');
+  const text = ctx.message?.text || '';
+  const match = text.match(/^\/offer(?:@[\w_]+)?\s+(.+)$/i);
+  if (!match) {
+    await replyHtml(ctx, 'Использование: <code>/offer &lt;slug&gt;</code>.');
+    return;
+  }
+
+  const slug = match[1].trim();
+  if (!slug) {
+    await replyHtml(ctx, 'Укажите slug оффера: <code>/offer &lt;slug&gt;</code>.');
+    return;
+  }
+
+  const tgId = ctx.from?.id;
+  const allowAdmin = isAdmin(ctx);
+  if (!tgId && !allowAdmin) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  try {
+    const offer = await fetchOfferDetail({ slug, tgId, allowAdmin });
+    if (!offer) {
+      await replyHtml(ctx, 'Оффер не найден или у вас нет прав на просмотр.');
+      return;
+    }
+
+    const caps = formatCaps(offer.caps_total);
+    const message = [
+      `📄 Оффер <b>${offer.slug}</b>`,
+      `Название: <b>${offer.title}</b>`,
+      `Тип ЦД: <code>${offer.event_type}</code>`,
+      `Дата старта: <code>${formatDate(offer.created_at)}</code>`,
+      `Статус: <code>${offer.status}</code>`,
+      `Payout: <code>${centsToCurrency(offer.payout_cents)}</code>`,
+      `Лимит: <code>${caps}</code>`,
+      `ЦД всего: <code>${offer.conversions_total ?? 0}</code>, премиум: <code>${offer.premium_total ?? 0}</code>`,
+      `Потрачено: <code>${centsToCurrency(offer.spent_total_cents)}</code>`,
+      `Остаток бюджета: <code>${centsToCurrency(offer.budget_left_cents)}</code>`,
+      '',
+      `Трекинг: <code>${offer.tracking_url}</code>`,
+      '',
+      'Завести ещё /ads или открыть список /list',
+    ].join('\n');
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Создать копию', `offer:copy:${offer.slug}`),
+        Markup.button.callback('Изменить лимит', `offer:limit:${offer.slug}`),
+      ],
+    ]);
+
+    await replyHtml(ctx, message, { reply_markup: keyboard });
+  } catch (error) {
+    console.error('[offer] detail error', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить информацию об оффере. Попробуйте позже.');
+  }
+});
+
+bot.action(/^offer:(copy|limit):(.+)$/i, async (ctx) => {
+  const [, action, slug] = ctx.match || [];
+  await ctx.answerCbQuery();
+  if (!slug) {
+    await replyHtml(ctx, 'Некорректный оффер.');
+    return;
+  }
+  const actionText = action === 'copy' ? 'создания копии' : 'изменения лимита';
+  await replyHtml(
+    ctx,
+    `Функция ${actionText} будет доступна позже. Пожалуйста, обратитесь к администратору или используйте /ads для нового оффера.`,
+  );
+});
+
+bot.command('stat', async (ctx) => {
+  logUpdate(ctx, 'stat:custom');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  const text = ctx.message?.text || '';
+  const args = text.split(/\s+/).slice(1).filter(Boolean);
+
+  const buildResponse = async (range) => {
+    const offers = await buildAdvertiserPeriodStats(tgId, range);
+    return buildStatsSection(range, offers);
+  };
+
+  if (!args.length) {
+    const periods = ['today', '7d', '30d'].map((key) => toRangeBoundaries(key));
+    const sections = [];
+    for (const period of periods) {
+      if (!period) continue;
+      sections.push(await buildResponse(period));
+    }
+    sections.push('Для произвольного периода используйте <code>/stat YYYY-MM-DD YYYY-MM-DD</code>.');
+    await replyHtml(ctx, sections.join('\n\n'));
+    return;
+  }
+
+  let range;
+  if (args.length === 1) {
+    const key = args[0].toLowerCase();
+    range = toRangeBoundaries(key);
+    if (!range) {
+      range = toRangeBoundaries('custom', args[0], args[0]);
+    }
+  } else {
+    if (args[0].toLowerCase() === 'custom' && args.length >= 3) {
+      range = toRangeBoundaries('custom', args[1], args[2]);
+    } else {
+      range = toRangeBoundaries('custom', args[0], args[1]);
+    }
+  }
+
+  if (!range) {
+    await replyHtml(ctx, 'Не удалось распознать период. Используйте формат <code>/stat 2024-01-01 2024-01-31</code>.');
+    return;
+  }
+
+  const section = await buildResponse(range);
+  await replyHtml(ctx, section);
+});
+
+bot.command('statadm', async (ctx) => {
+  logUpdate(ctx, 'statadm');
+  if (!isAdmin(ctx)) {
+    await replyHtml(ctx, '⛔️ Команда доступна только администраторам.');
+    return;
+  }
+
+  const text = ctx.message?.text || '';
+  const args = text.split(/\s+/).slice(1).filter(Boolean);
+
+  let range = null;
+  if (!args.length) {
+    range = toRangeBoundaries('7d');
+  } else if (args.length === 1) {
+    range = toRangeBoundaries(args[0].toLowerCase());
+    if (!range) {
+      range = toRangeBoundaries('custom', args[0], args[0]);
+    }
+  } else {
+    if (args[0].toLowerCase() === 'custom' && args.length >= 3) {
+      range = toRangeBoundaries('custom', args[1], args[2]);
+    } else {
+      range = toRangeBoundaries('custom', args[0], args[1]);
+    }
+  }
+
+  if (!range) {
+    await replyHtml(ctx, 'Укажите период: <code>/statadm today</code>, <code>/statadm 7d</code> или <code>/statadm YYYY-MM-DD YYYY-MM-DD</code>.');
+    return;
+  }
+
+  const offers = await buildAdminPeriodStats(range);
+  const message = buildAdminStatsSection(range, offers);
+  await replyHtml(ctx, message);
+});
+
+bot.command('pending', async (ctx) => {
+  logUpdate(ctx, 'pending');
+  if (!isAdmin(ctx)) {
+    await replyHtml(ctx, '⛔️ Команда доступна только администраторам.');
+    return;
+  }
+
+  const pendingOffers = await fetchPendingOffers();
+  if (!pendingOffers.length) {
+    await replyHtml(ctx, 'Подвисших офферов без оплаты нет.');
+    return;
+  }
+
+  const lines = pendingOffers.map((offer) => {
+    const contact = buildContactLink(offer.owner_id);
+    const budget = centsToCurrency(offer.budget_cents);
+    const paid = centsToCurrency(offer.paid_cents);
+    return (
+      `• ${contact} — <b>${offer.slug}</b> (${formatDate(offer.created_at)})\n` +
+      `  бюджет: <code>${budget}</code>, оплачено: <code>${paid}</code>, статус: <code>${offer.status}</code>`
+    );
+  });
+
+  await replyHtml(ctx, ['🕒 Подвисшие офферы без оплаты:', ...lines].join('\n'));
 });
 
 export async function handleStartWithToken(ctx, rawToken) {

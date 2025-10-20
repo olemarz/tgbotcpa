@@ -67,6 +67,66 @@ function parseIdSet(value) {
   );
 }
 
+function parseIPv4(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const parts = value.trim().split('.');
+  if (parts.length !== 4) {
+    return null;
+  }
+  const bytes = parts.map((part) => {
+    const num = Number.parseInt(part, 10);
+    return Number.isInteger(num) && num >= 0 && num <= 255 ? num : null;
+  });
+  if (bytes.some((byte) => byte === null)) {
+    return null;
+  }
+  return (
+    (bytes[0] << 24) |
+    (bytes[1] << 16) |
+    (bytes[2] << 8) |
+    bytes[3]
+  ) >>> 0;
+}
+
+function parseBlockedSubnets(raw) {
+  if (!raw) {
+    return [];
+  }
+
+  const entries = [];
+  for (const token of raw.split(',').map((part) => part.trim()).filter(Boolean)) {
+    const [ipPart, prefixPart] = token.split('/');
+    const ipInt = parseIPv4(ipPart);
+    if (ipInt === null) {
+      console.warn(`[config] failed to parse blocked subnet: ${token}`);
+      continue;
+    }
+
+    let prefix = 32;
+    if (prefixPart !== undefined && prefixPart !== '') {
+      const parsedPrefix = Number.parseInt(prefixPart, 10);
+      if (!Number.isInteger(parsedPrefix) || parsedPrefix < 0 || parsedPrefix > 32) {
+        console.warn(`[config] invalid CIDR prefix for blocked subnet: ${token}`);
+        continue;
+      }
+      prefix = parsedPrefix;
+    }
+
+    const mask = prefix === 0 ? 0 : ((0xffffffff << (32 - prefix)) & 0xffffffff) >>> 0;
+    const network = ipInt & mask;
+
+    entries.push({
+      cidr: `${ipPart}/${prefix}`,
+      network,
+      mask,
+    });
+  }
+
+  return entries;
+}
+
 export function buildConfig(env = process.env) {
   const botToken = requireEnv(env, 'BOT_TOKEN');
   const baseUrlRaw = requireEnv(env, 'BASE_URL');
@@ -111,11 +171,26 @@ export function buildConfig(env = process.env) {
 
   const botUsername = trim(env.BOT_USERNAME) || '';
 
-  const postbackTimeoutMs = (() => {
-    const raw = trim(env.POSTBACK_TIMEOUT_MS);
-    if (!raw) return 4000;
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isNaN(parsed) ? 4000 : parsed;
+  const postback = (() => {
+    const url = trim(env.POSTBACK_URL) || null;
+    const methodRaw = trim(env.POSTBACK_METHOD) || 'GET';
+    const secret = trim(env.POSTBACK_SECRET) || null;
+
+    const timeoutRaw = trim(env.POSTBACK_TIMEOUT_MS);
+    const timeoutParsed = Number.parseInt(timeoutRaw ?? '', 10);
+    const timeoutMs = Number.isNaN(timeoutParsed) ? 4000 : timeoutParsed;
+
+    const retriesRaw = trim(env.POSTBACK_RETRIES);
+    const retriesParsed = Number.parseInt(retriesRaw ?? '', 10);
+    const retries = Number.isNaN(retriesParsed) ? 0 : Math.max(0, retriesParsed);
+
+    return {
+      url,
+      method: methodRaw.toUpperCase(),
+      secret,
+      timeoutMs,
+      retries,
+    };
   })();
 
   const idempotencyTtlSec = (() => {
@@ -141,6 +216,8 @@ export function buildConfig(env = process.env) {
     return raw && raw.length ? raw : null;
   })();
 
+  const blockedSubnets = parseBlockedSubnets(trim(env.BLOCKED_SUBNETS));
+
   return {
     botToken,
     baseUrl,
@@ -152,7 +229,8 @@ export function buildConfig(env = process.env) {
     cpaApiKey,
     cpaSecret,
     botUsername,
-    postbackTimeoutMs,
+    postbackTimeoutMs: postback.timeoutMs,
+    postback,
     idempotencyTtlSec,
     allowedUpdates,
     tz: trim(env.TZ) || 'Europe/Rome',
@@ -164,6 +242,7 @@ export function buildConfig(env = process.env) {
     linkCaptureDisabled,
     geoMarkupPercent: GEO_MARKUP_MAP,
     adminChatId,
+    blockedSubnets,
   };
 }
 

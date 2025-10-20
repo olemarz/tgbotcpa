@@ -4,6 +4,7 @@ import { adjustPayoutCents } from '../util/pricing.js';
 import { centsToXtr } from '../util/xtr.js';
 import { replyHtml } from './html.js';
 import { sendStarsInvoice } from './paymentsStars.js';
+import { centsToCurrency } from '../services/offerStats.js';
 
 let offersColumnsPromise;
 
@@ -37,7 +38,7 @@ function normalizeGeoForInsert(geo) {
   return { list: list.length ? list : null, input: geoInput };
 }
 
-export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
+export async function finalizeOfferAndInvoiceStars(ctx, form = {}, options = {}) {
   const columns = await getOfferColumns();
   const tgId = ctx.from?.id ?? null;
 
@@ -167,12 +168,43 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
       : normalizedBudgetXtr,
   };
 
+  const adminChatId = config.adminChatId || process.env.ADMIN_CHAT_ID || null;
+  const baseUrl = config.baseUrl || process.env.BASE_URL || '';
+  const trackingUid = ctx.from?.id ?? null;
+  let trackingUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/click/${offer.id}` : `/click/${offer.id}`;
+
+  if (trackingUid != null) {
+    const uidParam = encodeURIComponent(String(trackingUid));
+    trackingUrl = trackingUrl.includes('?') ? `${trackingUrl}&uid=${uidParam}` : `${trackingUrl}?uid=${uidParam}`;
+  }
+
+  try {
+    trackingUrl = buildTrackingUrl({ baseUrl, offerId: offer.id, uid: trackingUid ?? undefined });
+  } catch (error) {
+    console.error('[offerFinalize] failed to build tracking url', { offerId: offer.id, error: error?.message });
+  }
+
+  if (adminChatId && ctx?.telegram?.sendMessage) {
+    const offerTitle = offer.title || offer.id;
+    const metrics = [
+      `slug: ${form?.slug || offer.id}`,
+      `ЦД: ${form?.event_type || '—'}`,
+      `лимит: ${form?.caps_total ?? '—'}`,
+      `payout: ${centsToCurrency(payoutAdjusted)}`,
+    ].join(', ');
+    const message = `🆕 Новый оффер ${offerTitle}\n${metrics}\n${trackingUrl}`;
+    ctx.telegram
+      .sendMessage(adminChatId, message, { disable_web_page_preview: true })
+      .catch((error) => console.error('[offerFinalize] failed to notify admin', error?.message || error));
+  }
+
   const amountInStars = Math.max(1, Math.ceil(offer.budget_xtr || centsToXtr(offer.budget_cents)));
   const payoutInStars = Math.max(1, Math.ceil(centsToXtr(payoutAdjusted)));
 
   const starsEnabled = String(process.env.STARS_ENABLED || '').toLowerCase() === 'true';
+  const skipPayment = options?.skipPayment === true;
 
-  if (starsEnabled) {
+  if (starsEnabled && !skipPayment) {
     await sendStarsInvoice(ctx, {
       title: `Оплата оффера: ${offer.title || offer.id}`,
       description: `Бюджет: ${amountInStars} ⭐️. Payout: ${payoutInStars} ⭐️.`,
@@ -186,6 +218,17 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
         `Бюджет: <b>${amountInStars} ⭐️</b>.`,
     );
   }
+
+  const summaryLines = [
+    '🔗 Ссылка для трафика готова:',
+    `<code>${trackingUrl}</code>`,
+    `Тип ЦД: <b>${form?.event_type || '—'}</b>, лимит: <b>${form?.caps_total ?? '—'}</b>, payout: <b>${centsToCurrency(
+      payoutAdjusted,
+    )}</b>.`,
+    '',
+    'Завести ещё /ads или посмотреть /list',
+  ];
+  await replyHtml(ctx, summaryLines.join('\n'));
 
   return {
     ...offer,
