@@ -3,7 +3,6 @@ throw new Error('FATAL: old adsUserFlow imported. Remove all imports.');
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { query } from '../db/index.js';
-import { uuid } from '../util/id.js';
 import { normalizeToISO2, isAllowedByGeo as isGeoAllowed } from '../util/geo.js';
 import { sendPostback } from '../services/postback.js';
 
@@ -325,10 +324,10 @@ export async function handleAdsSkip(ctx, offerId) {
 async function ensureAttribution(offerId, tgId) {
   const existing = await query(
     `
-      SELECT id, click_id, uid, state
+      SELECT user_id, click_id, uid, state
       FROM attribution
       WHERE offer_id = $1 AND tg_id = $2
-      ORDER BY created_at DESC
+      ORDER BY last_seen DESC
       LIMIT 1
     `,
     [offerId, tgId]
@@ -339,10 +338,12 @@ async function ensureAttribution(offerId, tgId) {
   }
 
   const inserted = await query(
-    `INSERT INTO attribution (id, offer_id, tg_id, state, created_at)
-     VALUES ($1, $2, $3, 'started', NOW())
-     RETURNING id, click_id, uid, state`,
-    [uuid(), offerId, tgId]
+    `INSERT INTO attribution (user_id, offer_id, uid, tg_id, state)
+     VALUES ($1, $2, $3, $4, 'started')
+     ON CONFLICT (user_id, offer_id)
+     DO UPDATE SET state = 'started', last_seen = now(), tg_id = EXCLUDED.tg_id
+     RETURNING user_id, click_id, uid, state`,
+    [tgId, offerId, String(tgId), tgId]
   );
   return inserted.rows[0];
 }
@@ -358,13 +359,16 @@ async function registerJoinConversion({ offerId, tgId, attribution }) {
     return { already: true };
   }
 
-  const inserted = await query(
-    `INSERT INTO events(offer_id, tg_id, event_type) VALUES($1,$2,$3) RETURNING id`,
-    [offerId, tgId, JOIN_GROUP_EVENT]
+  await query(
+    `INSERT INTO events(offer_id, user_id, uid, tg_id, event_type) VALUES($1,$2,$3,$4,$5)`,
+    [offerId, tgId, attribution?.uid ?? '', tgId, JOIN_GROUP_EVENT],
   );
-  const eventId = inserted.rows[0]?.id;
-  console.log('[EVENT] saved', { event_id: eventId, event_type: JOIN_GROUP_EVENT, offer_id: offerId, tg_id: tgId });
-  await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attribution.click_id]);
+  await query(
+    `UPDATE attribution
+        SET state='converted', last_seen = now(), click_id = COALESCE($3, click_id)
+      WHERE user_id=$1 AND offer_id=$2`,
+    [tgId, offerId, attribution?.click_id ?? null],
+  );
 
   try {
     await sendPostback({

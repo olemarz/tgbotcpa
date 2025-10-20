@@ -3,16 +3,18 @@ import 'dotenv/config';
 import { Telegraf, Scenes, session } from 'telegraf';
 
 import { query } from '../db/index.js';
-import { sendPostback } from '../services/postback.js';
-import { approveJoin, createConversion } from '../services/conversion.js';
+import { insertEvent } from '../db/events.js';
+import { createConversion } from '../services/conversion.js';
 import { joinCheck } from '../services/joinCheck.js';
+import * as attribution from '../services/attribution.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
-import { listRecentOffers } from '../db/offers.js';
+import { listAllOffers } from '../db/offers.js';
+import { sendPostback } from '../utils/postbackSender.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -118,6 +120,178 @@ function isAdmin(ctx) {
   return legacy && String(fromId) === legacy;
 }
 
+function normalizePayload(rawPayload) {
+  if (!rawPayload || typeof rawPayload !== 'object') {
+    return {};
+  }
+
+  if (Array.isArray(rawPayload)) {
+    return rawPayload.filter((value) => value !== undefined);
+  }
+
+  return Object.entries(rawPayload).reduce((acc, [key, value]) => {
+    if (value === undefined) {
+      return acc;
+    }
+
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      acc[key] = normalizePayload(value);
+      return acc;
+    }
+
+    acc[key] = value;
+    return acc;
+  }, {});
+}
+
+async function withEventError(label, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error('[EVENT_ERR]', `${label}:`, error?.message || error);
+    return null;
+  }
+}
+
+async function resolveOfferContext(tgId) {
+  if (!tgId) {
+    return null;
+  }
+
+  const result = await query(
+    `SELECT a.offer_id, a.user_id, a.click_id, a.uid, o.postback_url
+       FROM attribution a
+       LEFT JOIN offers o ON o.id = a.offer_id
+      WHERE a.tg_id = $1
+      ORDER BY a.last_seen DESC
+      LIMIT 1`,
+    [tgId],
+  );
+
+  if (!result.rowCount) {
+    return null;
+  }
+
+  const row = result.rows[0];
+  return {
+    offerId: row.offer_id,
+    userId: row.user_id ?? tgId,
+    clickId: row.click_id ?? null,
+    uid: row.uid ?? null,
+    postbackUrl: row.postback_url ?? null,
+  };
+}
+
+async function handleEvent(ctx, eventType, payload = {}, options = {}) {
+  const tgId = options?.tgId ?? ctx.from?.id ?? ctx.update?.message?.from?.id ?? null;
+  if (!tgId) {
+    return;
+  }
+
+  const context = await withEventError(`resolveOffer:${eventType}`, () => resolveOfferContext(tgId));
+  if (!context?.offerId) {
+    return;
+  }
+
+  const eventPayload = normalizePayload({
+    ...payload,
+    click_id: context.clickId ?? undefined,
+    uid: context.uid ?? undefined,
+  });
+
+  const inserted = await withEventError(`insertEvent:${eventType}`, () =>
+    insertEvent({
+      offer_id: context.offerId,
+      user_id: context.userId ?? tgId,
+      tg_id: tgId,
+      event_type: eventType,
+      payload: eventPayload,
+    }),
+  );
+
+  if (!inserted?.id) {
+    return;
+  }
+
+  await withEventError(`attachEvent:${eventType}`, () =>
+    attribution.attachEvent({
+      offerId: context.offerId,
+      tgId,
+      clickId: context.clickId ?? null,
+      uid: context.uid ?? null,
+    }),
+  );
+
+  await withEventError(`sendPostback:${eventType}`, () =>
+    sendPostback({
+      offerId: context.offerId,
+      eventType,
+      tgId,
+      clickId: context.clickId ?? null,
+      uid: context.uid ?? null,
+      postbackUrl: context.postbackUrl ?? null,
+    }),
+  );
+
+  console.log(`[EVENT] saved ${eventType} by ${tgId} for offer ${context.offerId}`);
+}
+
+function detectStartEventsFromValue(value, source) {
+  if (typeof value !== 'string' || !value) {
+    return [];
+  }
+
+  const normalized = value.toLowerCase();
+  const events = [];
+
+  if (normalized.includes('app_start')) {
+    events.push({
+      type: 'miniapp_start',
+      payload: {
+        source,
+        value,
+      },
+    });
+  }
+
+  if (normalized.includes('extbot_start')) {
+    events.push({
+      type: 'external_bot_start',
+      payload: {
+        source,
+        value,
+      },
+    });
+  }
+
+  return events;
+}
+
+function detectStartEventsFromMessage(message) {
+  const entries = [];
+  if (!message) {
+    return entries;
+  }
+
+  const sources = [
+    ['text', message.text],
+    ['caption', message.caption],
+    ['web_app_data', message.web_app_data?.data],
+    ['start_payload', message.start_param],
+  ];
+
+  const seen = new Set();
+  for (const [source, value] of sources) {
+    for (const entry of detectStartEventsFromValue(value, source)) {
+      if (seen.has(entry.type)) continue;
+      seen.add(entry.type);
+      entries.push(entry);
+    }
+  }
+
+  return entries;
+}
+
 // ─── admin команды ────────────────────────────────────────────────────────────
 
 bot.command('admin_offers', async (ctx) => {
@@ -125,7 +299,7 @@ bot.command('admin_offers', async (ctx) => {
     return ctx.reply('403');
   }
 
-  const list = await listRecentOffers(15);
+  const list = await listAllOffers(15);
   if (!list.length) {
     return ctx.reply('Нет офферов');
   }
@@ -318,7 +492,7 @@ export async function handleStartWithToken(ctx, rawToken) {
 
   const res = await query(
     `
-    SELECT c.id AS click_id, c.offer_id, c.uid, o.target_url, o.event_type
+    SELECT c.id, c.offer_id, c.uid, o.target_url, o.event_type
     FROM clicks c JOIN offers o ON o.id=c.offer_id
     WHERE c.start_token=$1
     LIMIT 1
@@ -331,11 +505,12 @@ export async function handleStartWithToken(ctx, rawToken) {
     return;
   }
 
-  const { click_id, offer_id, uid, target_url, event_type } = res.rows[0];
+  const click = res.rows[0];
+  const { offer_id, uid, target_url, event_type } = click;
 
   const update = await query(
     `UPDATE clicks SET tg_id=$1, used_at=NOW() WHERE id=$2 AND (tg_id IS NULL OR tg_id=$1)`,
-    [tgId, click_id],
+    [tgId, click.id],
   );
   if (!update.rowCount) {
     console.warn('[tg] start token already used', { token, tgId });
@@ -344,10 +519,16 @@ export async function handleStartWithToken(ctx, rawToken) {
   }
 
   try {
-    await linkAttributionRow({ clickId: click_id, offerId: offer_id, uid, tgId });
+    await attribution.upsertAttribution({
+      user_id: tgId,
+      offer_id,
+      uid: uid ?? '',
+      tg_id: tgId,
+      click_id: click.id,
+    });
   } catch (error) {
-    console.error('[ATTR] failed to link', error?.message || error, {
-      click_id,
+    console.error('[ATTR] failed to upsert', error?.message || error, {
+      click_id: click.id,
       offer_id,
       tg_id: tgId,
     });
@@ -466,28 +647,26 @@ bot.command('cancel', async (ctx) => {
   }
 });
 
-// вступление в группу (chat_member)
-bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
+// ─── Telegram event tracking ──────────────────────────────────────────────────
+
+bot.on('chat_member', async (ctx) => {
   logUpdate(ctx, 'chat_member');
-  const upd = ctx.update.chat_member || ctx.update.my_chat_member;
-  const user = upd?.new_chat_member?.user;
-  const status = upd?.new_chat_member?.status;
-  if (!user) return;
-  if (!['member', 'administrator', 'creator'].includes(status)) return;
+  const update = ctx.update?.chat_member;
+  const newMember = update?.new_chat_member;
+  const user = newMember?.user;
+  const status = newMember?.status;
 
-  const tgId = user.id;
+  if (!user || status !== 'member') {
+    return;
+  }
 
-  const res = await query(
-    `
-    SELECT click_id, offer_id, uid
-    FROM attribution
-    WHERE tg_id=$1 AND state='started'
-      AND created_at >= NOW() - INTERVAL '24 hours'
-    ORDER BY created_at DESC LIMIT 1
-  `,
-    [tgId],
-  );
-  if (!res.rowCount) return;
+  const payload = {
+    source: 'telegram.chat_member',
+    chat_id: update?.chat?.id ?? null,
+    chat_type: update?.chat?.type ?? null,
+    inviter_id: update?.from?.id ?? null,
+    status,
+  };
 
   const { click_id: attrClickId, offer_id, uid } = res.rows[0];
   const existing = await query(
@@ -511,33 +690,177 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
   console.log('[EVENT] saved', { event_id: eventId, event_type: JOIN_GROUP_EVENT, offer_id, tg_id: tgId });
 
   const updated = await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
+  await withEventError('handleEvent:join_group', () =>
+    handleEvent(ctx, 'join_group', payload, { tgId: user.id }),
+  );
+});
 
-  if (!updated.rowCount) {
+bot.on('chat_join_request', async (ctx) => {
+  logUpdate(ctx, 'chat_join_request');
+  const request = ctx.update?.chat_join_request;
+  const user = request?.from;
+
+  if (!user) {
     return;
   }
 
-  if (!eventId) {
-    console.error('[EVENT] missing id after insert', { offer_id, tg_id: tgId, event_type: JOIN_GROUP_EVENT });
+  const payload = {
+    source: 'telegram.chat_join_request',
+    chat_id: request?.chat?.id ?? null,
+    chat_type: request?.chat?.type ?? null,
+    invite_link: request?.invite_link?.invite_link ?? null,
+  };
+
+  const chatId = request?.chat?.id;
+  if (chatId != null && ctx.telegram?.approveChatJoinRequest) {
+    await withEventError('approveChatJoinRequest', () =>
+      ctx.telegram.approveChatJoinRequest(chatId, user.id),
+    );
+  }
+
+  await withEventError('handleEvent:subscribe', () =>
+    handleEvent(ctx, 'subscribe', payload, { tgId: user.id }),
+  );
+});
+
+bot.on('message_reaction', async (ctx) => {
+  const reaction = ctx.update?.message_reaction;
+  const user = reaction?.user;
+
+  if (!user) {
     return;
   }
 
-  try {
-    await sendPostback({
-      offer_id,
-      event_id: eventId,
-      event_type: JOIN_GROUP_EVENT,
-      tg_id: tgId,
-      uid,
-      click_id: attrClickId,
-    });
-  } catch (error) {
-    console.error('postback error:', error?.message || error);
+  const payload = {
+    source: 'telegram.message_reaction',
+    chat_id: reaction?.chat?.id ?? null,
+    chat_type: reaction?.chat?.type ?? null,
+    message_id: reaction?.message_id ?? null,
+    new_reaction: reaction?.new_reaction ?? null,
+    old_reaction: reaction?.old_reaction ?? null,
+  };
+
+  await withEventError('handleEvent:reaction', () =>
+    handleEvent(ctx, 'reaction', payload, { tgId: user.id }),
+  );
+});
+
+bot.on('poll_answer', async (ctx, next) => {
+  const pollAnswer = ctx.pollAnswer ?? ctx.update?.poll_answer;
+  const user = pollAnswer?.user;
+
+  if (user) {
+    const payload = {
+      source: 'telegram.poll_answer',
+      poll_id: pollAnswer?.poll_id ?? null,
+      option_ids: Array.isArray(pollAnswer?.option_ids)
+        ? pollAnswer.option_ids
+        : [],
+    };
+
+    await withEventError('handleEvent:poll_vote', () =>
+      handleEvent(ctx, 'poll_vote', payload, { tgId: user.id }),
+    );
   }
 
-  try {
-    await approveJoin({ offer_id, tg_id: tgId, click_id: attrClickId });
-  } catch (error) {
-    console.error('approveJoin error:', error?.message || error);
+  if (typeof next === 'function') {
+    await withEventError('poll_answer.next', () => next());
+  }
+});
+
+bot.on('message', async (ctx, next) => {
+  const message = ctx.message;
+  const events = [];
+
+  if (message?.from?.id) {
+    const commentTarget = message.reply_to_message;
+    const isChannelReply =
+      commentTarget?.sender_chat?.type === 'channel' ||
+      commentTarget?.chat?.type === 'channel';
+
+    if (isChannelReply) {
+      events.push({
+        type: 'comment',
+        tgId: message.from.id,
+        payload: {
+          source: 'telegram.message.comment',
+          chat_id: message?.chat?.id ?? null,
+          chat_type: message?.chat?.type ?? null,
+          message_id: message?.message_id ?? null,
+          reply_to_message_id: commentTarget?.message_id ?? null,
+          thread_id: message?.message_thread_id ?? null,
+        },
+      });
+    }
+
+    const botId = ctx.botInfo?.id;
+    if (botId && message.forward_from?.id === botId) {
+      events.push({
+        type: 'share',
+        tgId: message.from.id,
+        payload: {
+          source: 'telegram.message.share',
+          chat_id: message?.chat?.id ?? null,
+          chat_type: message?.chat?.type ?? null,
+          message_id: message?.message_id ?? null,
+          forward_from_message_id: message?.forward_from_message_id ?? null,
+        },
+      });
+    }
+  }
+
+  const startEvents = detectStartEventsFromMessage(message);
+  if (startEvents.length) {
+    const tgId = message?.from?.id ?? ctx.from?.id ?? null;
+    if (tgId) {
+      for (const entry of startEvents) {
+        events.push({
+          type: entry.type,
+          tgId,
+          payload: {
+            source: `telegram.message.${entry.payload.source}`,
+            value: entry.payload.value ?? null,
+          },
+        });
+      }
+    }
+  }
+
+  for (const event of events) {
+    await withEventError(`handleEvent:${event.type}`, () =>
+      handleEvent(ctx, event.type, event.payload, { tgId: event.tgId }),
+    );
+  }
+
+  if (typeof next === 'function') {
+    await withEventError('message.next', () => next());
+  }
+});
+
+bot.on('callback_query', async (ctx, next) => {
+  const callback = ctx.callbackQuery;
+  const data = callback?.data;
+  const fromId = callback?.from?.id ?? null;
+
+  if (fromId && typeof data === 'string' && data) {
+    const startEntries = detectStartEventsFromValue(data, 'callback_data');
+    for (const entry of startEntries) {
+      await withEventError(`handleEvent:${entry.type}`, () =>
+        handleEvent(
+          ctx,
+          entry.type,
+          {
+            source: `telegram.callback_query.${entry.payload.source}`,
+            value: entry.payload.value ?? null,
+          },
+          { tgId: fromId },
+        ),
+      );
+    }
+  }
+
+  if (typeof next === 'function') {
+    await withEventError('callback_query.next', () => next());
   }
 });
 

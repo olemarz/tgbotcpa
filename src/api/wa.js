@@ -1,7 +1,7 @@
 import express from 'express';
 import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
-import { sendPostback } from '../services/postback.js';
+import { recordEvent } from '../services/events.js';
 import { verifyInitData } from '../utils/tgInitData.js';
 
 const JOIN_GROUP_EVENT = 'join_group';
@@ -128,60 +128,62 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
 
     const existingEvent = await query(
       `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND event_type = $3 LIMIT 1`,
-      [offerId, numericTgId, eventType],
+      [offerId, numericTgId, event],
     );
 
-    let eventId = existingEvent.rows[0]?.id || null;
-
-    if (!eventId) {
-      const inserted = await query(
-        `INSERT INTO events (offer_id, tg_id, event_type) VALUES ($1, $2, $3) RETURNING id`,
-        [offerId, numericTgId, eventType],
-      );
-      eventId = inserted.rows[0]?.id || null;
-    }
-
-    console.log('[EVENT] saved', { event_id: eventId, event_type: eventType, offer_id: offerId, tg_id: numericTgId });
-
-    const attribution = await query(`SELECT click_id FROM attribution WHERE click_id = $1 LIMIT 1`, [clickUuid]);
-
-    if (attribution.rowCount) {
-      await query(`UPDATE attribution SET state = 'converted' WHERE click_id = $1`, [attribution.rows[0].click_id]);
-    } else {
+    if (!existingEvent.rowCount) {
       await query(
-        `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1, $2, $3, $4, 'converted')`,
-        [clickUuid, offerId, uid ?? null, numericTgId],
+        `INSERT INTO events (offer_id, user_id, uid, tg_id, event_type) VALUES ($1, $2, $3, $4, $5)`,
+        [offerId, numericTgId, uid ?? '', numericTgId, event],
       );
     }
 
-    if (!eventId) {
-      console.error('[wa.debugComplete] missing event_id', { token, offerId, tgId: numericTgId });
-      return res.status(500).json({ ok: false, error: 'EVENT_ID_MISSING' });
-    }
+    await query(
+      `INSERT INTO attribution (user_id, offer_id, uid, tg_id, click_id, state)
+       VALUES ($1, $2, $3, $4, $5, 'converted')
+       ON CONFLICT (user_id, offer_id)
+       DO UPDATE
+          SET state = 'converted',
+              uid = EXCLUDED.uid,
+              tg_id = EXCLUDED.tg_id,
+              click_id = COALESCE(EXCLUDED.click_id, attribution.click_id),
+              last_seen = now()`,
+      [numericTgId, offerId, uid ?? '', numericTgId, clickUuid],
+    );
 
     try {
-      const result = await sendPostback({
-        offer_id: offerId,
-        event_id: eventId,
-        event_type: eventType,
-        tg_id: numericTgId,
+      const result = await recordEvent({
+        offerId,
+        tgId: numericTgId,
+        eventType: event,
+        payload: {
+          source: 'wa.debug_complete',
+          token,
+          click_id: clickUuid,
+        },
+        clickId: clickUuid,
+        postbackClickId: externalClickId ?? undefined,
         uid: uid ?? undefined,
-        click_id: externalClickId ?? undefined,
+        forcePostbackOnDedup: true,
       });
 
-      const httpStatus = result.http_status ?? result.status ?? null;
+      const httpStatus = result.postback?.http_status ?? result.postback?.status ?? null;
 
       return res.json({
         ok: true,
         status: httpStatus,
         http_status: httpStatus,
-        signature: result.signature,
-        dedup: !!result.dedup,
-        dryRun: !!result.dryRun,
+        signature: result.postback?.signature ?? null,
+        dedup: !!result.postback?.dedup,
+        dryRun: !!result.postback?.dryRun,
       });
-    } catch (postbackError) {
-      console.error('[wa.debugComplete] postback error', postbackError);
-      return res.status(502).json({ ok: false, error: postbackError?.message || 'POSTBACK_FAILED' });
+    } catch (recordError) {
+      if (recordError?.eventCreated === true || recordError?.eventCreated === false) {
+        console.error('[wa.debugComplete] postback error', recordError);
+        return res.status(502).json({ ok: false, error: recordError?.message || 'POSTBACK_FAILED' });
+      }
+
+      throw recordError;
     }
   } catch (error) {
     console.error('[wa.debugComplete] handler error', error);

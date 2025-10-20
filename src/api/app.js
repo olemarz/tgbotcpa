@@ -205,12 +205,20 @@ export function createApp() {
     }
 
     const limit = 5;
-    const [clicks, attributions, events, postbacks] = await Promise.all([
+    const [clicks, attributions, events] = await Promise.all([
       query('SELECT * FROM clicks WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
-      query('SELECT * FROM attribution WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
+      query('SELECT * FROM attribution WHERE tg_id = $1 ORDER BY last_seen DESC LIMIT $2', [tgId, limit]),
       query('SELECT * FROM events WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
-      query('SELECT * FROM postbacks WHERE tg_id = $1 ORDER BY created_at DESC LIMIT $2', [tgId, limit]),
     ]);
+
+    let postbacks = { rows: [] };
+    if (events.rowCount) {
+      const eventIds = events.rows.map((row) => row.id);
+      postbacks = await query(
+        'SELECT * FROM postbacks WHERE event_id = ANY($1::uuid[]) ORDER BY created_at DESC',
+        [eventIds],
+      );
+    }
 
     return res.json({
       ok: true,

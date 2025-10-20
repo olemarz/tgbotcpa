@@ -9,7 +9,15 @@ const DEFAULT_MIN_RATES = {
   start_bot: { base: 3, premium: 10 }
 };
 
-const DEFAULT_ALLOWED_UPDATES = ['message', 'callback_query', 'chat_member', 'my_chat_member'];
+const DEFAULT_ALLOWED_UPDATES = [
+  'message',
+  'callback_query',
+  'chat_member',
+  'my_chat_member',
+  'chat_join_request',
+  'message_reaction',
+  'poll_answer',
+];
 
 const GEO_MARKUP_JSON = (process.env.GEO_MARKUP_PERCENT_JSON || '').trim() || '{}';
 let GEO_MARKUP_MAP = {};
@@ -63,6 +71,7 @@ export function buildConfig(env = process.env) {
   const botToken = requireEnv(env, 'BOT_TOKEN');
   const baseUrlRaw = requireEnv(env, 'BASE_URL');
   const dbUrl = requireEnv(env, 'DATABASE_URL');
+  const databaseUrl = dbUrl;
 
   const cpaPostbackUrlRaw = trim(env.CPA_POSTBACK_URL ?? env.CPA_PB_URL ?? '');
   const cpaApiKey = trim(env.CPA_API_KEY) || '';
@@ -137,6 +146,7 @@ export function buildConfig(env = process.env) {
     baseUrl,
     baseUrlHost: baseUrlUrl.host,
     port,
+    databaseUrl,
     dbUrl,
     cpaPostbackUrl: cpaPostbackUrlRaw,
     cpaApiKey,

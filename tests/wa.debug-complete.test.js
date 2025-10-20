@@ -63,14 +63,15 @@ describe('POST /api/wa/debug/complete', () => {
     assert.equal(response.body.signature.length, 64);
 
     const { rows: events } = await query(
-      `SELECT offer_id, tg_id, event_type, id FROM events WHERE offer_id = $1`,
+      `SELECT offer_id, tg_id, event_type, payload FROM events WHERE offer_id = $1`,
       [offerId],
     );
     assert.equal(events.length, 1);
     assert.equal(events[0].offer_id, offerId);
     assert.equal(Number(events[0].tg_id), tgId);
     assert.equal(events[0].event_type, 'join_group');
-    assert.ok(events[0].id, 'event id should exist');
+    assert.equal(events[0].payload?.source, 'wa.debug_complete');
+    assert.equal(events[0].payload?.token, token);
 
     const { rows: attributionRows } = await query(
       `SELECT offer_id, tg_id, state FROM attribution WHERE click_id = $1`,
