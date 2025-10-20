@@ -127,24 +127,29 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
     }
 
     const existingEvent = await query(
-      `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND type = $3 LIMIT 1`,
+      `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND event_type = $3 LIMIT 1`,
       [offerId, numericTgId, event],
     );
 
     if (!existingEvent.rowCount) {
-      await query(`INSERT INTO events (offer_id, tg_id, type) VALUES ($1, $2, $3)`, [offerId, numericTgId, event]);
-    }
-
-    const attribution = await query(`SELECT click_id FROM attribution WHERE click_id = $1 LIMIT 1`, [clickUuid]);
-
-    if (attribution.rowCount) {
-      await query(`UPDATE attribution SET state = 'converted' WHERE click_id = $1`, [attribution.rows[0].click_id]);
-    } else {
       await query(
-        `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state) VALUES ($1, $2, $3, $4, 'converted')`,
-        [clickUuid, offerId, uid ?? null, numericTgId],
+        `INSERT INTO events (offer_id, user_id, uid, tg_id, event_type) VALUES ($1, $2, $3, $4, $5)`,
+        [offerId, numericTgId, uid ?? '', numericTgId, event],
       );
     }
+
+    await query(
+      `INSERT INTO attribution (user_id, offer_id, uid, tg_id, click_id, state)
+       VALUES ($1, $2, $3, $4, $5, 'converted')
+       ON CONFLICT (user_id, offer_id)
+       DO UPDATE
+          SET state = 'converted',
+              uid = EXCLUDED.uid,
+              tg_id = EXCLUDED.tg_id,
+              click_id = COALESCE(EXCLUDED.click_id, attribution.click_id),
+              last_seen = now()`,
+      [numericTgId, offerId, uid ?? '', numericTgId, clickUuid],
+    );
 
     try {
       const result = await sendPostback({
