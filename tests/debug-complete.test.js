@@ -47,11 +47,12 @@ describe('POST /debug/complete', () => {
     assert.ok(typeof response.body.signature === 'string');
     assert.equal(response.body.signature.length, 64);
 
-    const { rows } = await query('SELECT offer_id, tg_id, event, status FROM postbacks');
+    const { rows } = await query('SELECT offer_id, tg_id, event_type, status, event_id FROM postbacks');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].offer_id, payload.offer_id);
     assert.equal(Number(rows[0].tg_id), payload.tg_id);
-    assert.equal(rows[0].event, payload.event);
+    assert.equal(rows[0].event_type, payload.event);
+    assert.ok(rows[0].event_id, 'event_id should be stored');
     assert.equal(rows[0].status, 'dry-run');
   });
 });

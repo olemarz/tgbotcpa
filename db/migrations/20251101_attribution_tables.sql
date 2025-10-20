@@ -18,12 +18,12 @@ CREATE TABLE IF NOT EXISTS events (
   id               bigserial PRIMARY KEY,
   offer_id         bigint NOT NULL REFERENCES offers(id),
   tg_id            bigint NOT NULL,
-  event            text NOT NULL,
+  event_type       text NOT NULL,
   is_premium       boolean NOT NULL DEFAULT false,
-  meta             jsonb NOT NULL DEFAULT '{}'::jsonb,
+  payload          text,
   created_at       timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS events_offer_event_idx ON events(offer_id, event, created_at DESC);
+CREATE INDEX IF NOT EXISTS events_offer_event_idx ON events(offer_id, event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS events_tg_offer_idx   ON events(tg_id, offer_id);
 
 CREATE TABLE IF NOT EXISTS attribution (
@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS postbacks (
   status_code      integer,
   response_ms      integer,
   response_body    text,
+  payload          text,
+  event_type       text,
   attempt          integer NOT NULL DEFAULT 1,
   created_at       timestamptz NOT NULL DEFAULT now()
 );

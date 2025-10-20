@@ -5,8 +5,6 @@ import { query } from '../db/index.js';
 import { shortToken } from '../util/id.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const NUMERIC_REGEXP = /^\d+$/;
-
 const CLICK_TOKEN_RETRIES = 5;
 
 let clickColumnsPromise;
@@ -33,6 +31,17 @@ function normalizeOptional(value) {
   return trimmed.length ? trimmed : null;
 }
 
+function normalizeIpValue(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) {
+    return mapped[1];
+  }
+  return value;
+}
+
 function normalizeOfferId(raw) {
   const value = typeof raw === 'string' ? raw.trim() : '';
   if (!value) {
@@ -41,10 +50,7 @@ function normalizeOfferId(raw) {
   if (UUID_REGEXP.test(value)) {
     return { ok: true, value };
   }
-  if (NUMERIC_REGEXP.test(value)) {
-    return { ok: true, value: Number.parseInt(value, 10) };
-  }
-  return { ok: false, reason: 'offer_id must be numeric or UUID' };
+  return { ok: false, reason: 'offer_id must be UUID' };
 }
 
 async function insertClickRow({
@@ -100,11 +106,12 @@ async function insertClickRow({
     const placeholders = insertColumns.map((_, idx) => `$${idx + 1}`);
 
     try {
-      await query(
-        `INSERT INTO clicks (${insertColumns.join(', ')}) VALUES (${placeholders.join(', ')})`,
+      const result = await query(
+        `INSERT INTO clicks (${insertColumns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`,
         values,
       );
-      return token;
+      const insertedId = result.rows[0]?.id ?? null;
+      return { token, clickId: insertedId };
     } catch (error) {
       if (error?.code === '23505') {
         attempts += 1;
@@ -146,13 +153,14 @@ export async function handleClick(req, res) {
   const source = normalizeOptional(req.query?.source);
   const sub1 = normalizeOptional(req.query?.sub1);
   const sub2 = normalizeOptional(req.query?.sub2);
-  const ip = normalizeOptional(requestIp.getClientIp(req));
+  const ip = normalizeOptional(normalizeIpValue(requestIp.getClientIp(req)));
   const userAgent = normalizeOptional(req.get('user-agent'));
   const referer = normalizeOptional(req.get('referer') || req.get('referrer'));
 
   let startToken;
+  let clickRowId;
   try {
-    startToken = await insertClickRow({
+    const inserted = await insertClickRow({
       offerId,
       uid,
       externalClickId,
@@ -163,6 +171,8 @@ export async function handleClick(req, res) {
       userAgent,
       referer,
     });
+    startToken = inserted.token;
+    clickRowId = inserted.clickId;
   } catch (error) {
     if (error?.code === '23503') {
       res.status(404).json({ ok: false, error: 'offer not found' });
@@ -178,6 +188,12 @@ export async function handleClick(req, res) {
     uid,
     click_id: externalClickId,
     start_token: startToken,
+  });
+
+  console.log('[ATTR] linked', {
+    offer_id: offerId,
+    click_id: clickRowId ?? null,
+    tg_id: null,
   });
 
   const redirectUrl = buildTelegramStartLink(botUsername, startToken);

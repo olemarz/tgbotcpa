@@ -37,7 +37,7 @@ if (!databaseUrl || isPgMem) {
           tg_id: 123456,
           uid: 'smoke-uid',
           click_id: 'smoke-click',
-          event: 'join_group',
+          event_type: 'join_group',
         });
 
       assert.equal(response.status, 200, 'should respond with 200');

@@ -69,17 +69,17 @@ waRouter.post('/claim', async (req, res) => {
 
 waRouter.post('/debug/complete', requireDebug, async (req, res) => {
   const token = toTrimmedString(req.body?.token);
-  const event = toTrimmedString(req.body?.event);
+  const eventType = toTrimmedString(req.body?.event_type || req.body?.event);
 
   if (!token) {
     return res.status(400).json({ ok: false, error: 'TOKEN_REQUIRED' });
   }
 
-  if (!event) {
+  if (!eventType) {
     return res.status(400).json({ ok: false, error: 'EVENT_REQUIRED' });
   }
 
-  if (event !== JOIN_GROUP_EVENT) {
+  if (eventType !== JOIN_GROUP_EVENT) {
     return res.status(400).json({ ok: false, error: 'UNSUPPORTED_EVENT' });
   }
 
@@ -122,18 +122,26 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       return res.status(409).json({ ok: false, error: 'TG_ID_INVALID' });
     }
 
-    if (offerEvent && offerEvent !== event) {
-      console.warn('[wa.debugComplete] event mismatch', { token, offer_event: offerEvent, event });
+    if (offerEvent && offerEvent !== eventType) {
+      console.warn('[wa.debugComplete] event mismatch', { token, offer_event: offerEvent, event_type: eventType });
     }
 
     const existingEvent = await query(
-      `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND type = $3 LIMIT 1`,
-      [offerId, numericTgId, event],
+      `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND event_type = $3 LIMIT 1`,
+      [offerId, numericTgId, eventType],
     );
 
-    if (!existingEvent.rowCount) {
-      await query(`INSERT INTO events (offer_id, tg_id, type) VALUES ($1, $2, $3)`, [offerId, numericTgId, event]);
+    let eventId = existingEvent.rows[0]?.id || null;
+
+    if (!eventId) {
+      const inserted = await query(
+        `INSERT INTO events (offer_id, tg_id, event_type) VALUES ($1, $2, $3) RETURNING id`,
+        [offerId, numericTgId, eventType],
+      );
+      eventId = inserted.rows[0]?.id || null;
     }
+
+    console.log('[EVENT] saved', { event_id: eventId, event_type: eventType, offer_id: offerId, tg_id: numericTgId });
 
     const attribution = await query(`SELECT click_id FROM attribution WHERE click_id = $1 LIMIT 1`, [clickUuid]);
 
@@ -146,13 +154,19 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       );
     }
 
+    if (!eventId) {
+      console.error('[wa.debugComplete] missing event_id', { token, offerId, tgId: numericTgId });
+      return res.status(500).json({ ok: false, error: 'EVENT_ID_MISSING' });
+    }
+
     try {
       const result = await sendPostback({
         offer_id: offerId,
+        event_id: eventId,
+        event_type: eventType,
         tg_id: numericTgId,
         uid: uid ?? undefined,
         click_id: externalClickId ?? undefined,
-        event,
       });
 
       const httpStatus = result.http_status ?? result.status ?? null;

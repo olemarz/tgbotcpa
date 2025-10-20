@@ -53,7 +53,7 @@ describe('POST /api/wa/debug/complete', () => {
     const response = await request(app)
       .post('/api/wa/debug/complete')
       .set('x-debug-token', process.env.DEBUG_TOKEN)
-      .send({ token, event: 'join_group' });
+      .send({ token, event_type: 'join_group' });
 
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
@@ -63,13 +63,14 @@ describe('POST /api/wa/debug/complete', () => {
     assert.equal(response.body.signature.length, 64);
 
     const { rows: events } = await query(
-      `SELECT offer_id, tg_id, type FROM events WHERE offer_id = $1`,
+      `SELECT offer_id, tg_id, event_type, id FROM events WHERE offer_id = $1`,
       [offerId],
     );
     assert.equal(events.length, 1);
     assert.equal(events[0].offer_id, offerId);
     assert.equal(Number(events[0].tg_id), tgId);
-    assert.equal(events[0].type, 'join_group');
+    assert.equal(events[0].event_type, 'join_group');
+    assert.ok(events[0].id, 'event id should exist');
 
     const { rows: attributionRows } = await query(
       `SELECT offer_id, tg_id, state FROM attribution WHERE click_id = $1`,
@@ -81,13 +82,14 @@ describe('POST /api/wa/debug/complete', () => {
     assert.equal(attributionRows[0].state, 'converted');
 
     const { rows: postbacks } = await query(
-      `SELECT offer_id, tg_id, event, status FROM postbacks WHERE offer_id = $1`,
+      `SELECT offer_id, tg_id, event_type, status, event_id FROM postbacks WHERE offer_id = $1`,
       [offerId],
     );
     assert.equal(postbacks.length, 1);
     assert.equal(postbacks[0].offer_id, offerId);
     assert.equal(Number(postbacks[0].tg_id), tgId);
-    assert.equal(postbacks[0].event, 'join_group');
+    assert.equal(postbacks[0].event_type, 'join_group');
+    assert.equal(postbacks[0].event_id, events[0].id);
     assert.equal(postbacks[0].status, 'dry-run');
   });
 });

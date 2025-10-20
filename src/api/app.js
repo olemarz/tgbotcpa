@@ -134,7 +134,8 @@ export function createApp() {
       tg_id: tgIdRaw,
       uid: uidRaw,
       click_id: clickIdRaw,
-      event: eventRaw,
+      event_type: eventTypeRaw,
+      event: legacyEventRaw,
       payout_cents: payoutCents,
     } = req.body || {};
 
@@ -142,7 +143,7 @@ export function createApp() {
     const tg_id = tgIdRaw ? Number.parseInt(String(tgIdRaw), 10) : NaN;
     const uid = uidRaw ? String(uidRaw) : undefined;
     const click_id = clickIdRaw ? String(clickIdRaw) : undefined;
-    const event = eventRaw ? String(eventRaw) : '';
+    const event_type = eventTypeRaw ? String(eventTypeRaw) : legacyEventRaw ? String(legacyEventRaw) : '';
     const payout_cents = payoutCents !== undefined ? Number.parseInt(String(payoutCents), 10) : undefined;
     const normalizedPayout = Number.isNaN(payout_cents) ? undefined : payout_cents;
 
@@ -150,8 +151,8 @@ export function createApp() {
       return res.status(400).json({ ok: false, error: 'offer_id must be UUID' });
     }
 
-    if (!event) {
-      return res.status(400).json({ ok: false, error: 'event is required' });
+    if (!event_type) {
+      return res.status(400).json({ ok: false, error: 'event_type is required' });
     }
 
     if (Number.isNaN(tg_id)) {
@@ -159,12 +160,26 @@ export function createApp() {
     }
 
     try {
+      const insertedEvent = await query(
+        `INSERT INTO events (offer_id, tg_id, event_type) VALUES ($1, $2, $3) RETURNING id`,
+        [offer_id, tg_id, event_type],
+      );
+      const event_id = insertedEvent.rows[0]?.id;
+
+      console.log('[EVENT] saved', { event_id, event_type, offer_id, tg_id });
+
+      if (!event_id) {
+        console.error('[debug.complete] missing event_id after insert', { offer_id, tg_id, event_type });
+        return res.status(500).json({ ok: false, error: 'EVENT_ID_MISSING' });
+      }
+
       const result = await sendPostback({
         offer_id,
+        event_id,
+        event_type,
         tg_id,
         uid,
         click_id,
-        event,
         payout_cents: normalizedPayout,
       });
       const httpStatus = result.http_status ?? result.status ?? null;

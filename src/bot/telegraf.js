@@ -225,9 +225,8 @@ async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
   try {
     await query(insertSql, params);
     console.log('[ATTR] linked', {
-      click_id: clickId,
       offer_id: offerId,
-      uid: normalizedUid,
+      click_id: clickId,
       tg_id: tgId,
     });
     return;
@@ -266,9 +265,8 @@ async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
   }
 
   console.log('[ATTR] linked', {
-    click_id: clickId,
     offer_id: offerId,
-    uid: normalizedUid,
+    click_id: clickId,
     tg_id: tgId,
   });
 }
@@ -493,28 +491,44 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
 
   const { click_id: attrClickId, offer_id, uid } = res.rows[0];
   const existing = await query(
-    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND type=$3 LIMIT 1`,
+    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND event_type=$3 LIMIT 1`,
     [offer_id, tgId, JOIN_GROUP_EVENT],
   );
+  let eventId;
+
   if (existing.rowCount) {
+    eventId = existing.rows[0].id;
     await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
+    console.log('[EVENT] saved', { event_id: eventId, event_type: JOIN_GROUP_EVENT, offer_id, tg_id: tgId });
     return;
   }
 
-  await query(`INSERT INTO events(offer_id, tg_id, type) VALUES($1,$2,$3)`, [offer_id, tgId, JOIN_GROUP_EVENT]);
+  const inserted = await query(
+    `INSERT INTO events(offer_id, tg_id, event_type) VALUES($1,$2,$3) RETURNING id`,
+    [offer_id, tgId, JOIN_GROUP_EVENT],
+  );
+  eventId = inserted.rows[0]?.id;
+  console.log('[EVENT] saved', { event_id: eventId, event_type: JOIN_GROUP_EVENT, offer_id, tg_id: tgId });
+
   const updated = await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
 
   if (!updated.rowCount) {
     return;
   }
 
+  if (!eventId) {
+    console.error('[EVENT] missing id after insert', { offer_id, tg_id: tgId, event_type: JOIN_GROUP_EVENT });
+    return;
+  }
+
   try {
     await sendPostback({
       offer_id,
+      event_id: eventId,
+      event_type: JOIN_GROUP_EVENT,
       tg_id: tgId,
       uid,
       click_id: attrClickId,
-      event: JOIN_GROUP_EVENT,
     });
   } catch (error) {
     console.error('postback error:', error?.message || error);
