@@ -15,6 +15,13 @@ import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
 import { listAllOffers } from '../db/offers.js';
 import { sendPostbackForEvent } from '../services/postback.js';
+import {
+  notifyOfferCapsIfNeeded,
+  OFFER_CAPS_INCREASE_CALLBACK_PREFIX,
+  fetchOfferForIncrease,
+} from '../services/offerCaps.js';
+import { centsToXtr } from '../util/xtr.js';
+import { sendStarsInvoice } from './paymentsStars.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -39,6 +46,8 @@ await ensureBotSelf(bot);
 
 // сцены
 const stage = new Scenes.Stage([adsWizardScene]);
+
+const STARS_ENABLED = String(process.env.STARS_ENABLED || '').toLowerCase() === 'true';
 
 const middlewares = [
   session({
@@ -144,6 +153,225 @@ function normalizePayload(rawPayload) {
   }, {});
 }
 
+async function handleIncreaseCapsInput(ctx) {
+  const awaiting = ctx.session?.awaiting;
+  if (!awaiting || awaiting.type !== 'increase_caps') {
+    return false;
+  }
+
+  const text = ctx.message?.text;
+  if (typeof text !== 'string' || !text.trim()) {
+    await replyHtml(ctx, 'Введите положительное целое число — сколько лидов добавить.');
+    return true;
+  }
+
+  const normalized = text.replace(/[\s,]+/g, '').trim();
+  const deltaCaps = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(deltaCaps) || deltaCaps <= 0) {
+    await replyHtml(ctx, 'Введите положительное целое число — сколько лидов добавить.');
+    return true;
+  }
+
+  const offer = await fetchOfferForIncrease(awaiting.offerId);
+  if (!offer) {
+    if (ctx.session) {
+      delete ctx.session.awaiting;
+    }
+    await replyHtml(ctx, '⚠️ Оффер не найден. Возможно, он уже удалён или архивирован.');
+    return true;
+  }
+
+  const payoutCents = Math.max(0, Number(offer.payoutCents || 0));
+  const deltaBudgetCents = deltaCaps * payoutCents;
+  const deltaBudgetStars = deltaBudgetCents > 0 ? Math.max(1, centsToXtr(deltaBudgetCents)) : 0;
+  const offerName = escapeHtml(offer.slug || offer.title || offer.id);
+  const newLimit = (Number(offer.capsTotal) || 0) + deltaCaps;
+
+  if (STARS_ENABLED && deltaBudgetCents > 0) {
+    try {
+      await sendStarsInvoice(ctx, {
+        title: `Увеличение лимита: ${offerName}`,
+        description: `Дополнительные лиды: ${deltaCaps}. К оплате: ${deltaBudgetStars} ⭐️.`,
+        totalStars: deltaBudgetStars,
+        payloadMeta: {
+          kind: 'caps_increase',
+          offer_id: offer.id,
+          delta_caps: deltaCaps,
+          delta_budget_cents: deltaBudgetCents,
+          requested_by: ctx.from?.id ?? null,
+        },
+      });
+      await replyHtml(
+        ctx,
+        `💳 Счёт на <b>${deltaBudgetStars} ⭐️</b> за ${deltaCaps} дополнительных лидов отправлен.\n` +
+          `После оплаты лимит увеличится до <b>${newLimit}</b>.`,
+      );
+      if (ctx.session) {
+        delete ctx.session.awaiting;
+      }
+    } catch (error) {
+      console.error('[caps.increase] invoice error', error?.message || error);
+      await replyHtml(ctx, '⚠️ Не удалось отправить счёт. Попробуйте позже.');
+    }
+    return true;
+  }
+
+  const columns = await getOfferColumns();
+  const values = [offer.id];
+  const updates = [];
+
+  if (columns.has('caps_total')) {
+    values.push(deltaCaps);
+    updates.push(`caps_total = COALESCE(caps_total,0) + $${values.length}`);
+  }
+  if (deltaBudgetCents > 0 && columns.has('budget_cents')) {
+    values.push(deltaBudgetCents);
+    updates.push(`budget_cents = COALESCE(budget_cents,0) + $${values.length}`);
+  }
+  if (deltaBudgetStars > 0 && columns.has('budget_xtr')) {
+    values.push(deltaBudgetStars);
+    updates.push(`budget_xtr = COALESCE(budget_xtr,0) + $${values.length}`);
+  }
+  if (columns.has('caps_reached_notified_at')) {
+    updates.push('caps_reached_notified_at = NULL');
+  }
+
+  if (!updates.length) {
+    await replyHtml(ctx, '⚠️ Не удалось обновить лимит — отсутствуют необходимые поля.');
+    if (ctx.session) {
+      delete ctx.session.awaiting;
+    }
+    return true;
+  }
+
+  try {
+    await query(`UPDATE offers SET ${updates.join(', ')} WHERE id=$1`, values);
+    const budgetNote =
+      deltaBudgetStars > 0 ? ` Бюджет увеличен на <b>${deltaBudgetStars} ⭐️</b>.` : '';
+    await replyHtml(
+      ctx,
+      `✅ Лимит оффера <b>${offerName}</b> увеличен до <b>${newLimit}</b>.${budgetNote}`,
+    );
+  } catch (error) {
+    console.error('[caps.increase] update error', error?.message || error);
+    await replyHtml(ctx, '⚠️ Не удалось обновить лимит. Попробуйте позже.');
+    return true;
+  } finally {
+    if (ctx.session) {
+      delete ctx.session.awaiting;
+    }
+  }
+
+  return true;
+}
+
+function buildPaymentSummary(columns, row, fallbackPaidXtr) {
+  if (columns.has('paid_xtr')) {
+    const paidValueXtr = Number(row.paid_xtr ?? 0);
+    const budgetValueXtr = columns.has('budget_xtr') ? Number(row.budget_xtr ?? 0) : null;
+    const budgetText = budgetValueXtr ? `/${budgetValueXtr}` : '';
+    return `${paidValueXtr}${budgetText} XTR`;
+  }
+
+  const paidCents = columns.has('paid_cents')
+    ? Number(row.paid_cents ?? 0)
+    : (Number(fallbackPaidXtr) || 0) * 100;
+  const budgetCents = columns.has('budget_cents') ? Number(row.budget_cents ?? 0) : 0;
+  const budgetText = budgetCents ? `/${(budgetCents / 100).toFixed(2)} ₽` : '';
+  return `${(paidCents / 100).toFixed(2)} ₽${budgetText}`;
+}
+
+async function applyCapsIncreasePayment(ctx, { columns, offerId, paidXtr, payload }) {
+  const deltaCaps = Number(payload?.delta_caps ?? 0);
+  const deltaBudgetCents = Number(payload?.delta_budget_cents ?? 0);
+  const deltaBudgetStars = deltaBudgetCents > 0 ? Math.max(1, centsToXtr(deltaBudgetCents)) : 0;
+
+  const values = [offerId];
+  const updateParts = [];
+  const returning = ['id'];
+  const increments = {};
+
+  if (columns.has('caps_total') && deltaCaps > 0) {
+    values.push(deltaCaps);
+    updateParts.push(`caps_total = COALESCE(caps_total,0) + $${values.length}`);
+    returning.push('caps_total');
+  }
+
+  if (deltaBudgetCents > 0 && columns.has('budget_cents')) {
+    values.push(deltaBudgetCents);
+    updateParts.push(`budget_cents = COALESCE(budget_cents,0) + $${values.length}`);
+    returning.push('budget_cents');
+  }
+
+  if (deltaBudgetStars > 0 && columns.has('budget_xtr')) {
+    values.push(deltaBudgetStars);
+    updateParts.push(`budget_xtr = COALESCE(budget_xtr,0) + $${values.length}`);
+    returning.push('budget_xtr');
+  }
+
+  if (columns.has('paid_xtr')) {
+    values.push(paidXtr);
+    increments.paid_xtr = values.length;
+    updateParts.push(`paid_xtr = COALESCE(paid_xtr,0) + $${values.length}`);
+    returning.push('paid_xtr');
+  }
+
+  if (columns.has('paid_cents')) {
+    const paidCents = paidXtr * 100;
+    values.push(paidCents);
+    increments.paid_cents = values.length;
+    updateParts.push(`paid_cents = COALESCE(paid_cents,0) + $${values.length}`);
+    returning.push('paid_cents');
+  }
+
+  if (!updateParts.length) {
+    await ctx.reply('💳 Оплата получена, но обновление лимита недоступно. Свяжитесь с поддержкой.');
+    return true;
+  }
+
+  if (columns.has('status')) {
+    if (columns.has('budget_xtr') && increments.paid_xtr) {
+      updateParts.push(
+        `status = CASE WHEN COALESCE(paid_xtr,0) + $${increments.paid_xtr} >= COALESCE(budget_xtr,0) THEN 'active' ELSE status END`,
+      );
+    } else if (columns.has('budget_cents') && increments.paid_cents) {
+      updateParts.push(
+        `status = CASE WHEN COALESCE(paid_cents,0) + $${increments.paid_cents} >= COALESCE(budget_cents,0) THEN 'active' ELSE status END`,
+      );
+    }
+    returning.push('status');
+  }
+
+  if (columns.has('caps_reached_notified_at')) {
+    updateParts.push('caps_reached_notified_at = NULL');
+  }
+
+  if (columns.has('budget_xtr')) returning.push('budget_xtr');
+  if (columns.has('budget_cents')) returning.push('budget_cents');
+
+  const result = await query(
+    `UPDATE offers SET ${updateParts.join(', ')} WHERE id=$1 RETURNING ${[...new Set(returning)].join(', ')}`,
+    values,
+  );
+
+  if (!result.rowCount) {
+    await ctx.reply('⚠️ Оплата получена, но оффер не найден. Свяжитесь с поддержкой.');
+    return true;
+  }
+
+  const row = result.rows[0];
+  const status = columns.has('status') ? row.status ?? 'active' : 'active';
+  const summary = buildPaymentSummary(columns, row, paidXtr);
+  const newLimit = columns.has('caps_total') ? Number(row.caps_total ?? 0) : null;
+  const limitText = deltaCaps > 0 && newLimit != null ? ` Лимит увеличен до ${newLimit}.` : '';
+  const budgetText = deltaBudgetStars > 0 ? ` Бюджет пополнен на ${deltaBudgetStars} ⭐️.` : '';
+
+  await ctx.reply(
+    `💳 Оплата принята. Оффер ${row.id} → ${status}. Оплачено: ${summary}.${limitText}${budgetText}`,
+  );
+  return true;
+}
+
 async function withEventError(label, fn) {
   try {
     return await fn();
@@ -232,6 +460,12 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
       postbackUrl: context.postbackUrl ?? null,
     }),
   );
+
+  if (inserted?.id) {
+    await withEventError(`caps.notify:${eventType}`, () =>
+      notifyOfferCapsIfNeeded({ offerId: context.offerId, telegram: ctx.telegram }),
+    );
+  }
 
   console.log(`[EVENT] saved ${eventType} by ${tgId} for offer ${context.offerId}`);
 }
@@ -687,6 +921,11 @@ bot.on('chat_member', async (ctx) => {
     [offer_id, tgId, JOIN_GROUP_EVENT],
   );
   eventId = inserted.rows[0]?.id;
+  try {
+    await notifyOfferCapsIfNeeded({ offerId: offer_id, telegram: ctx.telegram });
+  } catch (error) {
+    console.error('[chat_member] caps notify error', error?.message || error);
+  }
   console.log('[EVENT] saved', { event_id: eventId, event_type: JOIN_GROUP_EVENT, offer_id, tg_id: tgId });
 
   const updated = await query(`UPDATE attribution SET state='converted' WHERE click_id=$1`, [attrClickId]);
@@ -770,6 +1009,9 @@ bot.on('poll_answer', async (ctx, next) => {
 
 bot.on('message', async (ctx, next) => {
   const message = ctx.message;
+  if (await handleIncreaseCapsInput(ctx)) {
+    return;
+  }
   const events = [];
 
   if (message?.from?.id) {
@@ -842,6 +1084,46 @@ bot.on('callback_query', async (ctx, next) => {
   const data = callback?.data;
   const fromId = callback?.from?.id ?? null;
 
+  if (typeof data === 'string' && data.startsWith(OFFER_CAPS_INCREASE_CALLBACK_PREFIX)) {
+    const offerId = data.slice(OFFER_CAPS_INCREASE_CALLBACK_PREFIX.length).trim();
+    try {
+      await ctx.answerCbQuery();
+    } catch (error) {
+      console.error('[caps.increase] answerCbQuery error', error?.message || error);
+    }
+
+    if (!offerId) {
+      await replyHtml(ctx, '⚠️ Оффер не найден.');
+      return;
+    }
+
+    const offer = await fetchOfferForIncrease(offerId);
+    if (!offer) {
+      await replyHtml(ctx, '⚠️ Оффер не найден или недоступен.');
+      return;
+    }
+
+    if (ctx.session) {
+      ctx.session.awaiting = {
+        type: 'increase_caps',
+        offerId: offer.id,
+        requestedBy: ctx.from?.id ?? null,
+      };
+    }
+
+    const offerName = escapeHtml(offer.slug || offer.title || offer.id);
+    const payoutStars = offer.payoutCents > 0 ? Math.max(1, centsToXtr(offer.payoutCents)) : 0;
+    const payoutLine = payoutStars ? `Текущий payout: <b>${payoutStars} ⭐️</b>.\n` : '';
+    const currentLimit = Number.isFinite(Number(offer.capsTotal)) ? Number(offer.capsTotal) : 0;
+    await replyHtml(
+      ctx,
+      `Сколько дополнительных лидов добавить для <b>${offerName}</b>?\n` +
+        payoutLine +
+        `Текущий лимит: <b>${currentLimit}</b>.`,
+    );
+    return;
+  }
+
   if (fromId && typeof data === 'string' && data) {
     const startEntries = detectStartEventsFromValue(data, 'callback_data');
     for (const entry of startEntries) {
@@ -877,8 +1159,19 @@ bot.on('message', async (ctx, next) => {
   const sp = ctx.message?.successful_payment;
   if (!sp) return next?.();
   try {
-    const offerId = sp.invoice_payload;
     const paidXtr = Number(sp.total_amount || 0);
+    const payloadRaw = sp.invoice_payload;
+    let payload = null;
+    if (typeof payloadRaw === 'string' && payloadRaw.trim().startsWith('{')) {
+      try {
+        payload = JSON.parse(payloadRaw);
+      } catch (error) {
+        payload = null;
+      }
+    }
+
+    const kind = payload?.kind ?? null;
+    const offerId = payload?.offer_id ?? (typeof payloadRaw === 'string' ? payloadRaw : null);
 
     if (!offerId) {
       await ctx.reply('⚠️ Оплата получена, но оффер не найден. Свяжитесь с поддержкой.');
@@ -886,6 +1179,18 @@ bot.on('message', async (ctx, next) => {
     }
 
     const columns = await getOfferColumns();
+
+    if (kind === 'caps_increase') {
+      const handled = await applyCapsIncreasePayment(ctx, {
+        columns,
+        offerId,
+        paidXtr,
+        payload,
+      });
+      if (handled) {
+        return;
+      }
+    }
 
     const values = [offerId];
     const updateParts = [];
@@ -941,19 +1246,7 @@ bot.on('message', async (ctx, next) => {
 
     const row = result.rows[0];
     const status = columns.has('status') ? row.status ?? 'active' : 'active';
-    const paidValueXtr = columns.has('paid_xtr') ? Number(row.paid_xtr ?? 0) : null;
-    const budgetValueXtr = columns.has('budget_xtr') ? Number(row.budget_xtr ?? 0) : null;
-
-    let summary;
-    if (paidValueXtr != null) {
-      const budgetText = budgetValueXtr ? `/${budgetValueXtr}` : '';
-      summary = `${paidValueXtr}${budgetText} XTR`;
-    } else {
-      const paidCents = columns.has('paid_cents') ? Number(row.paid_cents ?? 0) : paidXtr * 100;
-      const budgetCents = columns.has('budget_cents') ? Number(row.budget_cents ?? 0) : 0;
-      const budgetText = budgetCents ? `/${(budgetCents / 100).toFixed(2)} ₽` : '';
-      summary = `${(paidCents / 100).toFixed(2)} ₽${budgetText}`;
-    }
+    const summary = buildPaymentSummary(columns, row, paidXtr);
 
     await ctx.reply(`💳 Оплата принята. Оффер ${row.id} → ${status}. Оплачено: ${summary}`);
   } catch (e) {

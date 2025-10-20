@@ -12,7 +12,11 @@ export async function sendStarsInvoice(ctx, { title, description, totalStars, pa
     return null;
   }
 
-  const payload = JSON.stringify({ kind: 'offer', ...payloadMeta });
+  const payloadObject = { ...payloadMeta };
+  if (!payloadObject.kind) {
+    payloadObject.kind = 'offer';
+  }
+  const payload = JSON.stringify(payloadObject);
 
   return ctx.replyWithInvoice({
     title: title || 'Оплата бюджета оффера',

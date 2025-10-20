@@ -2,6 +2,7 @@ import express from 'express';
 import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
 import { recordEvent } from '../services/events.js';
+import { notifyOfferCapsIfNeeded } from '../services/offerCaps.js';
 import { verifyInitData } from '../utils/tgInitData.js';
 
 const JOIN_GROUP_EVENT = 'join_group';
@@ -136,6 +137,11 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
         `INSERT INTO events (offer_id, user_id, uid, tg_id, event_type) VALUES ($1, $2, $3, $4, $5)`,
         [offerId, numericTgId, uid ?? '', numericTgId, event],
       );
+      try {
+        await notifyOfferCapsIfNeeded({ offerId, telegram: bot.telegram });
+      } catch (notifyError) {
+        console.error('[wa.debugComplete] caps notify error', notifyError);
+      }
     }
 
     await query(

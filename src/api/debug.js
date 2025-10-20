@@ -2,6 +2,8 @@ import { Router } from 'express';
 import pool from '../db/pool.js';
 import { v4 as uuid } from 'uuid';
 import { sendPostbackForEvent } from '../services/postback.js';
+import { notifyOfferCapsIfNeeded } from '../services/offerCaps.js';
+import { bot } from '../bot/telegraf.js';
 
 const router = Router();
 const q = (s, p=[]) => pool.query(s, p);
@@ -54,6 +56,11 @@ router.post('/debug/event', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [evId, offerId, tgId, null, tgId, ev, payload]
     );
+    try {
+      await notifyOfferCapsIfNeeded({ offerId, telegram: bot.telegram });
+    } catch (notifyError) {
+      console.error('[DEBUG event] caps notify error', notifyError?.message || notifyError);
+    }
 
     const attr = await q(
       `SELECT click_id, uid FROM attribution WHERE user_id=$1 AND offer_id=$2`,

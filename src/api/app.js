@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
+import { notifyOfferCapsIfNeeded } from '../services/offerCaps.js';
+import { bot } from '../bot/telegraf.js';
 import { parseGeoInput } from '../util/geo.js';
 import { uuid } from '../util/id.js';
 import { handleClick } from './click.js';
@@ -164,6 +166,11 @@ export function createApp() {
         `INSERT INTO events (offer_id, tg_id, event_type) VALUES ($1, $2, $3) RETURNING id`,
         [offer_id, tg_id, event_type],
       );
+      try {
+        await notifyOfferCapsIfNeeded({ offerId: offer_id, telegram: bot.telegram });
+      } catch (notifyError) {
+        console.error('[debug.complete] caps notify error', notifyError?.message || notifyError);
+      }
       const event_id = insertedEvent.rows[0]?.id;
 
       console.log('[EVENT] saved', { event_id, event_type, offer_id, tg_id });
