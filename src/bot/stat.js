@@ -334,16 +334,18 @@ async function respondWithStats(ctx, dateKey, { isCallback } = {}) {
   }
 }
 
-export function registerStatHandlers(bot, { logUpdate } = {}) {
+export function registerStatHandlers(bot, { logUpdate, enableCommand = true } = {}) {
   if (!bot) {
     throw new Error('bot instance is required');
   }
 
-  bot.command('stat', async (ctx) => {
-    logUpdate?.(ctx, 'stat');
-    const todayKey = formatDateKey(new Date());
-    await respondWithStats(ctx, todayKey);
-  });
+  if (enableCommand) {
+    bot.command('stat', async (ctx) => {
+      logUpdate?.(ctx, 'stat');
+      const todayKey = formatDateKey(new Date());
+      await respondWithStats(ctx, todayKey);
+    });
+  }
 
   const regexp = new RegExp(`^${STAT_CALLBACK_PREFIX}(.+)$`, 'i');
   bot.action(regexp, async (ctx) => {
