@@ -10,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const migrationsDir = path.join(__dirname, 'migrations');
 const seedsDir = path.join(__dirname, 'seeds');
+const viewsFile = path.join(__dirname, 'views.sql');
 
 async function applyMigrationsWithClient(client, { skip = new Set() } = {}) {
   await client.query('CREATE TABLE IF NOT EXISTS _migrations(id text primary key, applied_at timestamptz default now())');
@@ -64,6 +65,15 @@ async function applySeedsWithClient(client) {
   }
 }
 
+async function applyViewsWithClient(client) {
+  if (!fs.existsSync(viewsFile)) return;
+  const sql = fs.readFileSync(viewsFile, 'utf8');
+  if (!sql.trim()) return;
+  console.log('-> applying views.sql');
+  await client.query(sql);
+  console.log('✓ views.sql');
+}
+
 export async function runMigrations() {
   const connectionString = process.env.DATABASE_URL || '';
   if (connectionString.startsWith('pgmem://')) {
@@ -74,6 +84,7 @@ export async function runMigrations() {
       await client.query(
         `CREATE UNIQUE INDEX IF NOT EXISTS uniq_attr_click_tg ON attribution(click_id, tg_id)`
       );
+      await applyViewsWithClient(client);
       await applySeedsWithClient(client);
       console.log('Migration complete');
     } finally {
@@ -86,6 +97,7 @@ export async function runMigrations() {
   await client.connect();
   try {
     await applyMigrationsWithClient(client);
+    await applyViewsWithClient(client);
     await applySeedsWithClient(client);
     console.log('Migration complete');
   } finally {
