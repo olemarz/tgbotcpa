@@ -1,4 +1,3 @@
-import { finalizeOfferAndInvoiceStars } from './offerFinalize.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +10,7 @@ import { parseGeoInput } from '../utils/geo.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
 import { replyHtml } from './html.js';
 import { quoteOffer } from '../utils/pricing.js';
+import { finalizeOfferAndInvoiceStars } from './offerFinalize.js';
 
 const logPrefix = '[adsWizard]';
 
@@ -391,8 +391,8 @@ async function goToStep(ctx, step) {
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
   const lines = [
-    'Введите ссылку на объект для рекламы в формате https://t.me/ваш_объект_для_рекламы.',
     `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Пришлите ссылку на канал/группу/бота в формате https://t.me/...`,
+    'Введите ссылку на объект для рекламы в формате https://t.me/ваш_объект_для_рекламы.',
     'Команды: [Отмена] — выйти из мастера.',
   ];
   await ctx.reply(lines.join('\n'));
