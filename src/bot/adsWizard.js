@@ -91,6 +91,22 @@ async function logTrackingLink(offerId, title, trackingUrl) {
   }
 }
 
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatCurrencyFromCents(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return `${(num / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+}
+
 async function notifyChat(telegram, chatId, text) {
   if (!chatId) return;
   try {
@@ -879,10 +895,66 @@ async function finalizeWizardAfterSlug(ctx, unique) {
     finalizeCtx = fallbackCtx;
   }
 
-  await finalizeOfferAndInvoiceStars(finalizeCtx, form);
+  const inserted = await finalizeOfferAndInvoiceStars(finalizeCtx, form);
   try {
     await ctx.scene.leave();
   } catch {}
+
+  const offerId = inserted?.id;
+  const baseUrl = inserted?.base_url || config.baseUrl || process.env.BASE_URL || '';
+  const trackingUid = inserted?.tracking_uid ?? ctx.from?.id ?? null;
+
+  let trackingUrl = offerId ? `/click/${offerId}` : '';
+  if (trackingUid != null && trackingUrl) {
+    const uidParam = encodeURIComponent(String(trackingUid));
+    trackingUrl = trackingUrl.includes('?') ? `${trackingUrl}&uid=${uidParam}` : `${trackingUrl}?uid=${uidParam}`;
+  }
+
+  if (offerId) {
+    try {
+      trackingUrl = buildTrackingUrl({ baseUrl, offerId, uid: trackingUid ?? undefined });
+    } catch (error) {
+      console.error(`${logPrefix} failed to build tracking url`, {
+        offerId,
+        baseUrl,
+        error: error?.message || error,
+      });
+    }
+  }
+
+  const linkText = trackingUrl || `/click/${offerId ?? 'unknown'}`;
+
+  if (offerId && trackingUrl) {
+    await logTrackingLink(offerId, form.title ?? form.name ?? ctx.wizard.state.offer?.title, trackingUrl);
+  }
+  const advertiserMessage =
+    `✅ Рекламная кампания создана: <b>${escapeHtml(unique)}</b>.\n` +
+    `Трекинг-ссылка: <a href="${escapeHtml(linkText)}">${escapeHtml(linkText)}</a>\n` +
+    `Скопировать: <code>${escapeHtml(linkText)}</code>`;
+
+  try {
+    await replyHtml(ctx, advertiserMessage, { disable_web_page_preview: true });
+  } catch (error) {
+    console.error(`${logPrefix} failed to send tracking link to advertiser`, error?.message || error);
+  }
+
+  const adminChatId = config.adminChatId || process.env.ADMIN_CHAT_ID || null;
+  if (adminChatId && ctx?.telegram?.sendMessage) {
+    const eventLabel = eventLabels[form.event_type] || form.event_type || '—';
+    const capsLabel = form.caps_total && Number(form.caps_total) > 0 ? String(form.caps_total) : 'без ограничений';
+    const costLabel = formatCurrencyFromCents(form.payout_cents);
+    const adminMessage =
+      '🆕 Новая РК\n' +
+      `Slug: <code>${escapeHtml(unique)}</code>\n` +
+      `Тип ЦД: ${escapeHtml(eventLabel)}\n` +
+      `Кол-во ЦД: ${escapeHtml(capsLabel)}\n` +
+      `Стоимость ЦД: ${escapeHtml(costLabel)}\n` +
+      `Ссылка: <a href="${escapeHtml(linkText)}">${escapeHtml(linkText)}</a>`;
+
+    ctx.telegram
+      .sendMessage(adminChatId, adminMessage, { parse_mode: 'HTML', disable_web_page_preview: true })
+      .catch((error) => console.error(`${logPrefix} failed to notify admin`, error?.message || error));
+  }
 }
 
 export const adsWizardScene = new Scenes.WizardScene(
