@@ -1,94 +1,116 @@
-import { pool } from './index.js';
+import pool from './pool.js';
 
-let offersColumnsPromise;
-async function getOfferColumns() {
-  if (!offersColumnsPromise) {
-    offersColumnsPromise = pool
-      .query(
-        `SELECT column_name FROM information_schema.columns WHERE table_name = 'offers'`,
-      )
-      .then((res) => new Set(res.rows.map((row) => row.column_name)));
+let cachedColumns;
+
+async function loadOfferColumns() {
+  if (!cachedColumns) {
+    const result = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'offers'`,
+    );
+    cachedColumns = new Set(result.rows.map((row) => row.column_name));
   }
-  return offersColumnsPromise;
+  return cachedColumns;
 }
 
-function centsToUnits(value) {
-  if (value == null) return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) return null;
-  return Math.round(num / 100);
+function pushColumn(available, columns, values, params, column, value) {
+  if (!available.has(column)) return;
+  if (value === undefined) return;
+  columns.push(column);
+  values.push(value);
+  params.push(`$${values.length}`);
 }
 
-export async function insertOffer(o) {
-  const columns = await getOfferColumns();
-  const insertColumns = [];
+export async function insertOffer(form) {
+  const available = await loadOfferColumns();
+  const columns = [];
   const values = [];
   const params = [];
 
-  const push = (column, value) => {
-    if (!columns.has(column)) return;
-    insertColumns.push(column);
-    values.push(value);
-    params.push(`$${values.length}`);
-  };
-
-  const title = o.title ?? null;
-  if (columns.has('title')) push('title', title);
-  else if (columns.has('name')) push('name', title);
-
-  push('slug', o.slug ?? null);
-
-  if (columns.has('target_url')) push('target_url', o.target_url ?? null);
-  if (columns.has('target_link') && o.target_link != null) push('target_link', o.target_link);
-  if (columns.has('event_type')) push('event_type', o.event_type ?? 'join_group');
-
-  if (columns.has('payout_cents')) push('payout_cents', o.payout_cents ?? 0);
-  if (columns.has('budget_cents')) push('budget_cents', o.budget_cents ?? o.payout_cents ?? 0);
-  if (columns.has('budget_xtr') && o.budget_xtr != null) push('budget_xtr', o.budget_xtr);
-
-  if (columns.has('base_rate_cents')) push('base_rate_cents', o.base_rate_cents ?? null);
-  if (columns.has('premium_rate_cents')) push('premium_rate_cents', o.premium_rate_cents ?? null);
-
-  if (columns.has('base_rate')) {
-    const baseRate = o.base_rate ?? centsToUnits(o.base_rate_cents);
-    if (baseRate != null) push('base_rate', baseRate);
-  }
-
-  if (columns.has('premium_rate')) {
-    const premiumRate = o.premium_rate ?? centsToUnits(o.premium_rate_cents);
-    if (premiumRate != null) push('premium_rate', premiumRate);
-  }
-
-  if (columns.has('caps_total') && o.caps_total != null) push('caps_total', o.caps_total);
-  if (columns.has('geo')) push('geo', o.geo ?? null);
-  if (columns.has('geo_input') && o.geo_input != null) push('geo_input', o.geo_input);
-  if (columns.has('geo_list') && o.geo_list != null) push('geo_list', o.geo_list);
-  if (columns.has('geo_mode') && o.geo_mode != null) push('geo_mode', o.geo_mode);
-
-  if (columns.has('created_by_tg_id') && o.created_by_tg_id != null)
-    push('created_by_tg_id', o.created_by_tg_id);
-  if (columns.has('created_by_tg') && o.created_by_tg != null)
-    push('created_by_tg', o.created_by_tg);
-
-  if (columns.has('status')) push('status', o.status || 'draft');
+  pushColumn(available, columns, values, params, 'slug', form.slug ?? null);
+  pushColumn(available, columns, values, params, 'title', form.title ?? null);
+  pushColumn(available, columns, values, params, 'target_url', form.target_url ?? null);
+  pushColumn(available, columns, values, params, 'event_type', form.event_type ?? null);
+  pushColumn(available, columns, values, params, 'payout_cents', form.payout_cents ?? null);
+  pushColumn(available, columns, values, params, 'caps_total', form.caps_total ?? null);
+  pushColumn(available, columns, values, params, 'budget_cents', form.budget_cents ?? null);
+  pushColumn(available, columns, values, params, 'geo', form.geo ?? null);
+  pushColumn(available, columns, values, params, 'status', form.status ?? null);
+  pushColumn(available, columns, values, params, 'postback_url', form.postback_url ?? null);
+  pushColumn(available, columns, values, params, 'postback_secret', form.postback_secret ?? null);
+  pushColumn(available, columns, values, params, 'action_payload', form.action_payload ?? null);
+  pushColumn(available, columns, values, params, 'created_by_tg_id', form.created_by_tg_id ?? null);
 
   const sql = `
-    INSERT INTO offers (id${insertColumns.length ? ',' + insertColumns.join(',') : ''})
-    VALUES (gen_random_uuid()${params.length ? ',' + params.join(',') : ''})
-    RETURNING id, created_at
+    INSERT INTO offers (id${columns.length ? `, ${columns.join(', ')}` : ''})
+    VALUES (gen_random_uuid()${params.length ? `, ${params.join(', ')}` : ''})
+    RETURNING id, slug
   `;
 
-  const { rows } = await pool.query(sql, values);
-  return rows[0];
+  const result = await pool.query(sql, values);
+  return result.rows[0] ?? null;
 }
 
-export async function listRecentOffers(limit = 10) {
-  const { rows } = await pool.query(
-    `SELECT id, slug, title, event_type, payout_cents, caps_total, budget_cents, geo, status, created_at
-     FROM offers
-     ORDER BY created_at DESC
-     LIMIT $1`,
+function mapOfferRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    slug: row.slug ?? null,
+    title: row.title ?? null,
+    target_url: row.target_url ?? null,
+    event_type: row.event_type ?? null,
+    payout_cents: row.payout_cents ?? null,
+    caps_total: row.caps_total ?? null,
+    budget_cents: row.budget_cents ?? null,
+    geo: row.geo ?? null,
+    status: row.status ?? null,
+    postback_url: row.postback_url ?? null,
+    postback_secret: row.postback_secret ?? null,
+    action_payload: row.action_payload ?? null,
+    created_at: row.created_at ?? null,
+    created_by_tg_id: row.created_by_tg_id ?? null,
+  };
+}
+
+export async function getOfferById(id) {
+  const result = await pool.query(
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+       FROM offers
+      WHERE id = $1
+      LIMIT 1`,
+    [id],
+  );
+  return mapOfferRow(result.rows[0]);
+}
+
+export async function getOfferBySlug(slug) {
+  const result = await pool.query(
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+       FROM offers
+      WHERE slug = $1
+      LIMIT 1`,
+    [slug],
+  );
+  return mapOfferRow(result.rows[0]);
+}
+
+export async function listOffersByOwner(ownerTgId) {
+  const result = await pool.query(
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+       FROM offers
+      WHERE created_by_tg_id = $1
+      ORDER BY created_at DESC`,
+    [ownerTgId],
+  );
+  return result.rows.map(mapOfferRow);
+}
+
+export async function listAllOffers(limit = 50) {
+  const result = await pool.query(
+    `SELECT id, slug, title, target_url, event_type, payout_cents, caps_total, budget_cents, geo, status, postback_url, postback_secret, action_payload, created_at, created_by_tg_id
+       FROM offers
+      ORDER BY created_at DESC
+      LIMIT $1`,
     [limit],
   );
-  return rows;
+  return result.rows.map(mapOfferRow);
 }

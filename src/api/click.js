@@ -2,10 +2,9 @@ import requestIp from 'request-ip';
 
 import { config } from '../config.js';
 import { query } from '../db/index.js';
-import { shortToken } from '../util/id.js';
+import { shortToken, uuid } from '../util/id.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const NUMERIC_REGEXP = /^\d+$/;
 
 const CLICK_TOKEN_RETRIES = 5;
 
@@ -41,10 +40,7 @@ function normalizeOfferId(raw) {
   if (UUID_REGEXP.test(value)) {
     return { ok: true, value };
   }
-  if (NUMERIC_REGEXP.test(value)) {
-    return { ok: true, value: Number.parseInt(value, 10) };
-  }
-  return { ok: false, reason: 'offer_id must be numeric or UUID' };
+  return { ok: false, reason: 'offer_id must be UUID' };
 }
 
 async function insertClickRow({
@@ -63,8 +59,8 @@ async function insertClickRow({
   let attempts = 0;
   while (attempts < CLICK_TOKEN_RETRIES) {
     const token = shortToken();
-    const insertColumns = ['offer_id', 'uid', 'click_id', 'start_token'];
-    const values = [offerId, uid, externalClickId, token];
+    const insertColumns = ['id', 'offer_id', 'uid', 'click_id', 'start_token'];
+    const values = [uuid(), offerId, uid, externalClickId, token];
 
     if (columnsSet.has('source')) {
       insertColumns.push('source');
