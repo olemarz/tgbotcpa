@@ -391,8 +391,8 @@ async function goToStep(ctx, step) {
 async function promptTargetUrl(ctx) {
   const stepNum = STEP_NUMBERS[Step.TARGET_URL];
   const lines = [
-    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Пришлите ссылку на канал/группу/бота в формате https://t.me/...`,
-    'Введите ссылку на объект для рекламы в формате https://t.me/ваш_объект_для_рекламы.',
+    'Здравствуйте, пожалуйста, введите ссылку на объект (канал, группа, пост, апп, бот, голосование), который вы хотите рекламировать.',
+    `Шаг ${stepNum}/${TOTAL_INPUT_STEPS}. Ссылка должна быть в формате https://t.me/...`,
     'Команды: [Отмена] — выйти из мастера.',
   ];
   await ctx.reply(lines.join('\n'));

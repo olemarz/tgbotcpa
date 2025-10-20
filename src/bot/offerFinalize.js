@@ -5,6 +5,7 @@ import { centsToXtr } from '../util/xtr.js';
 import { replyHtml } from './html.js';
 import { buildTrackingUrl } from '../utils/tracking-link.js';
 import { sendStarsInvoice } from './paymentsStars.js';
+import { centsToCurrency } from '../services/offerStats.js';
 
 let offersColumnsPromise;
 
@@ -186,7 +187,13 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
 
   if (adminChatId && ctx?.telegram?.sendMessage) {
     const offerTitle = offer.title || offer.id;
-    const message = `🆕 Новый оффер ${offerTitle}: ${trackingUrl}`;
+    const metrics = [
+      `slug: ${form?.slug || offer.id}`,
+      `ЦД: ${form?.event_type || '—'}`,
+      `лимит: ${form?.caps_total ?? '—'}`,
+      `payout: ${centsToCurrency(payoutAdjusted)}`,
+    ].join(', ');
+    const message = `🆕 Новый оффер ${offerTitle}\n${metrics}\n${trackingUrl}`;
     ctx.telegram
       .sendMessage(adminChatId, message, { disable_web_page_preview: true })
       .catch((error) => console.error('[offerFinalize] failed to notify admin', error?.message || error));
@@ -211,6 +218,17 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
         `Бюджет: <b>${amountInStars} ⭐️</b>.`,
     );
   }
+
+  const summaryLines = [
+    '🔗 Ссылка для трафика готова:',
+    `<code>${trackingUrl}</code>`,
+    `Тип ЦД: <b>${form?.event_type || '—'}</b>, лимит: <b>${form?.caps_total ?? '—'}</b>, payout: <b>${centsToCurrency(
+      payoutAdjusted,
+    )}</b>.`,
+    '',
+    'Завести ещё /ads или посмотреть /list',
+  ];
+  await replyHtml(ctx, summaryLines.join('\n'));
 
   return {
     ...offer,

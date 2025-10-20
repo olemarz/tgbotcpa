@@ -1,6 +1,6 @@
 import https from 'node:https';
 import 'dotenv/config';
-import { Telegraf, Scenes, session } from 'telegraf';
+import { Telegraf, Scenes, session, Markup } from 'telegraf';
 
 import { query } from '../db/index.js';
 import { insertEvent } from '../db/events.js';
@@ -15,6 +15,16 @@ import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
 import { listAllOffers } from '../db/offers.js';
 import { sendPostbackForEvent } from '../services/postback.js';
+import {
+  centsToCurrency,
+  formatDate,
+  buildAdvertiserSummary,
+  buildAdvertiserPeriodStats,
+  buildAdminPeriodStats,
+  toRangeBoundaries,
+  fetchOfferDetail,
+  fetchPendingOffers,
+} from '../services/offerStats.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -86,6 +96,174 @@ const traceMiddleware = async (ctx, next) => {
 };
 
 middlewares.push(traceMiddleware);
+
+const ADVERTISER_COMMANDS = Object.freeze([
+  ['/start', 'приветствие и список команд'],
+  ['/list', 'подсказка по доступным командам'],
+  ['/ads', 'запустить мастер создания оффера'],
+  ['/myoffers', 'список ваших офферов и лимитов'],
+  ['/my_offers', 'краткие метрики по офферам'],
+  ['/offer <slug>', 'подробная карточка оффера'],
+  ['/stat', 'агрегированная статистика по офферам'],
+]);
+
+const ADMIN_COMMANDS = Object.freeze([
+  ['/admin', 'список команд администратора'],
+  ['/statadm', 'статистика по всем офферам рекламодателей'],
+  ['/pending', 'подвисшие офферы без оплаты'],
+  ['/admin_offers', 'последние офферы'],
+  ['/offer_status <id> <status>', 'смена статуса оффера'],
+]);
+
+function renderCommandList(commands) {
+  return commands
+    .map(([command, description]) => `• <code>${command}</code> — ${description}`)
+    .join('\n');
+}
+
+function buildAdvertiserHelpMessage(isAdmin = false) {
+  const header =
+    '👋 Здравствуйте! Это бот для запуска рекламных кампаний. Выберите команду ниже или сразу начните с <code>/ads</code>.';
+  const userCommands = renderCommandList(ADVERTISER_COMMANDS);
+  const adminSection = isAdmin
+    ? '\n\n⚙️ Команды администратора:\n' + renderCommandList(ADMIN_COMMANDS)
+    : '';
+  const footer =
+    '\n\nЕсли у вас есть токен кампании, используйте команду <code>/claim &lt;TOKEN&gt;</code>.';
+  return `${header}\n\nДоступные команды:\n${userCommands}${adminSection}${footer}`;
+}
+
+function buildAdminHelpMessage() {
+  return '⚙️ Команды администратора:\n' + renderCommandList(ADMIN_COMMANDS);
+}
+
+function formatCaps(value) {
+  if (value === null || value === undefined) return '—';
+  const num = Number(value);
+  return Number.isFinite(num) ? String(num) : String(value);
+}
+
+function buildSpentLeftText(spentCents, leftCents) {
+  return `${centsToCurrency(spentCents)} / ${centsToCurrency(leftCents)}`;
+}
+
+function buildMyOffersDetailed(offers) {
+  if (!offers.length) {
+    return 'У вас пока нет офферов. Запустите мастер командой <code>/ads</code>.';
+  }
+
+  const lines = offers.map((offer) => {
+    const caps = formatCaps(offer.caps_total);
+    const conversions = offer.conversions_total ?? 0;
+    const premium = offer.premium_total ?? 0;
+    const spentLeft = buildSpentLeftText(offer.spent_total_cents, offer.budget_left_cents);
+    return (
+      `• <b>${offer.slug}</b> — <code>${offer.event_type}</code>\n` +
+      `  payout: <code>${centsToCurrency(offer.payout_cents)}</code>, лимит: <code>${caps}</code>\n` +
+      `  ЦД: <code>${conversions}</code>, премиум: <code>${premium}</code>\n` +
+      `  spent/left: <code>${spentLeft}</code>`
+    );
+  });
+
+  lines.push('\nОткройте карточку оффера: <code>/offer &lt;slug&gt;</code>.');
+  return lines.join('\n');
+}
+
+function buildMyOffersCompact(offers) {
+  if (!offers.length) {
+    return 'Офферов не найдено. Используйте <code>/ads</code>, чтобы создать первый оффер.';
+  }
+
+  return offers
+    .map((offer) => {
+      const spentLeft = buildSpentLeftText(offer.spent_total_cents, offer.budget_left_cents);
+      const clicks = offer.clicks_range ?? offer.clicks_total ?? 0;
+      const conversions = offer.conversions_range ?? offer.conversions_total ?? 0;
+      return `• <b>${offer.slug}</b> — клики: <code>${clicks}</code>, ЦД: <code>${conversions}</code>, расход/остаток: <code>${spentLeft}</code>`;
+    })
+    .join('\n');
+}
+
+function buildStatsSection({ label }, offers) {
+  if (!offers.length) {
+    return `📊 Период ${label}: нет данных.`;
+  }
+
+  const lines = [`📊 Период ${label}`];
+  let totalClicks = 0;
+  let totalConversions = 0;
+  let totalPremium = 0;
+  let totalSpend = 0;
+
+  for (const offer of offers) {
+    const clicks = offer.clicks_range ?? 0;
+    const conversions = offer.conversions_range ?? 0;
+    const premium = offer.premium_range ?? 0;
+    const spend = offer.spent_range_cents ?? 0;
+    totalClicks += clicks;
+    totalConversions += conversions;
+    totalPremium += premium;
+    totalSpend += spend;
+    lines.push(
+      `• <b>${offer.slug}</b> (${formatDate(offer.created_at)})\n` +
+        `  клики: <code>${clicks}</code>, ЦД: <code>${conversions}</code>, премиум: <code>${premium}</code>\n` +
+        `  стоимость: <code>${centsToCurrency(spend)}</code>, остаток: <code>${centsToCurrency(
+          offer.budget_left_cents,
+        )}</code>`
+    );
+  }
+
+  lines.push(
+    `Итого — клики: <code>${totalClicks}</code>, ЦД: <code>${totalConversions}</code>, премиум: <code>${totalPremium}</code>, ` +
+      `стоимость: <code>${centsToCurrency(totalSpend)}</code>.`,
+  );
+
+  return lines.join('\n');
+}
+
+function buildContactLink(ownerId) {
+  if (!ownerId) return '—';
+  const id = String(ownerId);
+  return `<a href="tg://user?id=${id}">${id}</a>`;
+}
+
+function buildAdminStatsSection({ label }, offers) {
+  if (!offers.length) {
+    return `📊 Период ${label}: нет офферов.`;
+  }
+
+  const lines = [`📊 Период ${label}`];
+  let totalClicks = 0;
+  let totalConversions = 0;
+  let totalPremium = 0;
+  let totalSpend = 0;
+
+  for (const offer of offers) {
+    const clicks = offer.clicks_range ?? 0;
+    const conversions = offer.conversions_range ?? 0;
+    const premium = offer.premium_range ?? 0;
+    const spend = offer.spent_range_cents ?? 0;
+    totalClicks += clicks;
+    totalConversions += conversions;
+    totalPremium += premium;
+    totalSpend += spend;
+    const contact = buildContactLink(offer.owner_id);
+    lines.push(
+      `• ${contact} — ${formatDate(offer.created_at)} — <b>${offer.slug}</b>\n` +
+        `  клики: <code>${clicks}</code>, ЦД: <code>${conversions}</code>, премиум: <code>${premium}</code>\n` +
+        `  стоимость: <code>${centsToCurrency(spend)}</code>, остаток: <code>${centsToCurrency(
+          offer.budget_left_cents,
+        )}</code>`
+    );
+  }
+
+  lines.push(
+    `Итого — клики: <code>${totalClicks}</code>, ЦД: <code>${totalConversions}</code>, премиум: <code>${totalPremium}</code>, ` +
+      `стоимость: <code>${centsToCurrency(totalSpend)}</code>.`,
+  );
+
+  return lines.join('\n');
+}
 
 for (const middleware of middlewares) {
   bot.use(middleware);
@@ -385,7 +563,7 @@ export function logUpdate(ctx, tag = 'update') {
   });
 }
 
-registerStatHandlers(bot, { logUpdate });
+registerStatHandlers(bot, { logUpdate, enableCommand: false });
 
 // сброс ожиданий при слэш-командах
 bot.use(async (ctx, next) => {
@@ -476,11 +654,9 @@ bot.start(async (ctx) => {
     return;
   }
 
-  await replyHtml(
-    ctx,
-    'Это <code>/start</code> без параметра кампании. Пришлите токен командой:\n' +
-      '<code>/claim &lt;TOKEN&gt;</code>',
-  );
+  const admin = isAdmin(ctx);
+  const message = buildAdvertiserHelpMessage(admin);
+  await replyHtml(ctx, message);
 });
 
 bot.command('ads', async (ctx) => {
@@ -492,6 +668,238 @@ bot.command('ads', async (ctx) => {
     console.error('[ADS] start error:', error?.message || error);
     await replyHtml(ctx, 'Не удалось запустить мастер: <code>' + escapeHtml(error?.message || error) + '</code>');
   }
+});
+
+bot.command('list', async (ctx) => {
+  logUpdate(ctx, 'list');
+  const admin = isAdmin(ctx);
+  const userCommands = renderCommandList(ADVERTISER_COMMANDS);
+  const adminSection = admin ? '\n\n⚙️ Команды администратора:\n' + renderCommandList(ADMIN_COMMANDS) : '';
+  await replyHtml(ctx, `📋 Доступные команды:\n${userCommands}${adminSection}`);
+});
+
+bot.command('admin', async (ctx) => {
+  logUpdate(ctx, 'admin');
+  if (!isAdmin(ctx)) {
+    await replyHtml(ctx, '⛔️ Команда доступна только администраторам.');
+    return;
+  }
+  await replyHtml(ctx, buildAdminHelpMessage());
+});
+
+bot.command('myoffers', async (ctx) => {
+  logUpdate(ctx, 'myoffers');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  const offers = await buildAdvertiserSummary(tgId);
+  const message = buildMyOffersDetailed(offers);
+  await replyHtml(ctx, message);
+});
+
+bot.command('my_offers', async (ctx) => {
+  logUpdate(ctx, 'my_offers');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  const offers = await buildAdvertiserPeriodStats(tgId);
+  const message = buildMyOffersCompact(offers);
+  await replyHtml(ctx, message);
+});
+
+bot.command('offer', async (ctx) => {
+  logUpdate(ctx, 'offer');
+  const text = ctx.message?.text || '';
+  const match = text.match(/^\/offer(?:@[\w_]+)?\s+(.+)$/i);
+  if (!match) {
+    await replyHtml(ctx, 'Использование: <code>/offer &lt;slug&gt;</code>.');
+    return;
+  }
+
+  const slug = match[1].trim();
+  if (!slug) {
+    await replyHtml(ctx, 'Укажите slug оффера: <code>/offer &lt;slug&gt;</code>.');
+    return;
+  }
+
+  const tgId = ctx.from?.id;
+  const allowAdmin = isAdmin(ctx);
+  if (!tgId && !allowAdmin) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  try {
+    const offer = await fetchOfferDetail({ slug, tgId, allowAdmin });
+    if (!offer) {
+      await replyHtml(ctx, 'Оффер не найден или у вас нет прав на просмотр.');
+      return;
+    }
+
+    const caps = formatCaps(offer.caps_total);
+    const message = [
+      `📄 Оффер <b>${offer.slug}</b>`,
+      `Название: <b>${offer.title}</b>`,
+      `Тип ЦД: <code>${offer.event_type}</code>`,
+      `Дата старта: <code>${formatDate(offer.created_at)}</code>`,
+      `Статус: <code>${offer.status}</code>`,
+      `Payout: <code>${centsToCurrency(offer.payout_cents)}</code>`,
+      `Лимит: <code>${caps}</code>`,
+      `ЦД всего: <code>${offer.conversions_total ?? 0}</code>, премиум: <code>${offer.premium_total ?? 0}</code>`,
+      `Потрачено: <code>${centsToCurrency(offer.spent_total_cents)}</code>`,
+      `Остаток бюджета: <code>${centsToCurrency(offer.budget_left_cents)}</code>`,
+      '',
+      `Трекинг: <code>${offer.tracking_url}</code>`,
+      '',
+      'Завести ещё /ads или открыть список /list',
+    ].join('\n');
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('Создать копию', `offer:copy:${offer.slug}`),
+        Markup.button.callback('Изменить лимит', `offer:limit:${offer.slug}`),
+      ],
+    ]);
+
+    await replyHtml(ctx, message, { reply_markup: keyboard });
+  } catch (error) {
+    console.error('[offer] detail error', error?.message || error);
+    await replyHtml(ctx, 'Не удалось получить информацию об оффере. Попробуйте позже.');
+  }
+});
+
+bot.action(/^offer:(copy|limit):(.+)$/i, async (ctx) => {
+  const [, action, slug] = ctx.match || [];
+  await ctx.answerCbQuery();
+  if (!slug) {
+    await replyHtml(ctx, 'Некорректный оффер.');
+    return;
+  }
+  const actionText = action === 'copy' ? 'создания копии' : 'изменения лимита';
+  await replyHtml(
+    ctx,
+    `Функция ${actionText} будет доступна позже. Пожалуйста, обратитесь к администратору или используйте /ads для нового оффера.`,
+  );
+});
+
+bot.command('stat', async (ctx) => {
+  logUpdate(ctx, 'stat:custom');
+  const tgId = ctx.from?.id;
+  if (!tgId) {
+    await replyHtml(ctx, 'Не удалось определить ваш Telegram ID. Попробуйте позже.');
+    return;
+  }
+
+  const text = ctx.message?.text || '';
+  const args = text.split(/\s+/).slice(1).filter(Boolean);
+
+  const buildResponse = async (range) => {
+    const offers = await buildAdvertiserPeriodStats(tgId, range);
+    return buildStatsSection(range, offers);
+  };
+
+  if (!args.length) {
+    const periods = ['today', '7d', '30d'].map((key) => toRangeBoundaries(key));
+    const sections = [];
+    for (const period of periods) {
+      if (!period) continue;
+      sections.push(await buildResponse(period));
+    }
+    sections.push('Для произвольного периода используйте <code>/stat YYYY-MM-DD YYYY-MM-DD</code>.');
+    await replyHtml(ctx, sections.join('\n\n'));
+    return;
+  }
+
+  let range;
+  if (args.length === 1) {
+    const key = args[0].toLowerCase();
+    range = toRangeBoundaries(key);
+    if (!range) {
+      range = toRangeBoundaries('custom', args[0], args[0]);
+    }
+  } else {
+    if (args[0].toLowerCase() === 'custom' && args.length >= 3) {
+      range = toRangeBoundaries('custom', args[1], args[2]);
+    } else {
+      range = toRangeBoundaries('custom', args[0], args[1]);
+    }
+  }
+
+  if (!range) {
+    await replyHtml(ctx, 'Не удалось распознать период. Используйте формат <code>/stat 2024-01-01 2024-01-31</code>.');
+    return;
+  }
+
+  const section = await buildResponse(range);
+  await replyHtml(ctx, section);
+});
+
+bot.command('statadm', async (ctx) => {
+  logUpdate(ctx, 'statadm');
+  if (!isAdmin(ctx)) {
+    await replyHtml(ctx, '⛔️ Команда доступна только администраторам.');
+    return;
+  }
+
+  const text = ctx.message?.text || '';
+  const args = text.split(/\s+/).slice(1).filter(Boolean);
+
+  let range = null;
+  if (!args.length) {
+    range = toRangeBoundaries('7d');
+  } else if (args.length === 1) {
+    range = toRangeBoundaries(args[0].toLowerCase());
+    if (!range) {
+      range = toRangeBoundaries('custom', args[0], args[0]);
+    }
+  } else {
+    if (args[0].toLowerCase() === 'custom' && args.length >= 3) {
+      range = toRangeBoundaries('custom', args[1], args[2]);
+    } else {
+      range = toRangeBoundaries('custom', args[0], args[1]);
+    }
+  }
+
+  if (!range) {
+    await replyHtml(ctx, 'Укажите период: <code>/statadm today</code>, <code>/statadm 7d</code> или <code>/statadm YYYY-MM-DD YYYY-MM-DD</code>.');
+    return;
+  }
+
+  const offers = await buildAdminPeriodStats(range);
+  const message = buildAdminStatsSection(range, offers);
+  await replyHtml(ctx, message);
+});
+
+bot.command('pending', async (ctx) => {
+  logUpdate(ctx, 'pending');
+  if (!isAdmin(ctx)) {
+    await replyHtml(ctx, '⛔️ Команда доступна только администраторам.');
+    return;
+  }
+
+  const pendingOffers = await fetchPendingOffers();
+  if (!pendingOffers.length) {
+    await replyHtml(ctx, 'Подвисших офферов без оплаты нет.');
+    return;
+  }
+
+  const lines = pendingOffers.map((offer) => {
+    const contact = buildContactLink(offer.owner_id);
+    const budget = centsToCurrency(offer.budget_cents);
+    const paid = centsToCurrency(offer.paid_cents);
+    return (
+      `• ${contact} — <b>${offer.slug}</b> (${formatDate(offer.created_at)})\n` +
+      `  бюджет: <code>${budget}</code>, оплачено: <code>${paid}</code>, статус: <code>${offer.status}</code>`
+    );
+  });
+
+  await replyHtml(ctx, ['🕒 Подвисшие офферы без оплаты:', ...lines].join('\n'));
 });
 
 export async function handleStartWithToken(ctx, rawToken) {
