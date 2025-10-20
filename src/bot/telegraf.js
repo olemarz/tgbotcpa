@@ -6,13 +6,14 @@ import { query } from '../db/index.js';
 import { approveJoin, createConversion } from '../services/conversion.js';
 import { recordEvent } from '../services/events.js';
 import { joinCheck } from '../services/joinCheck.js';
+import * as attribution from '../services/attribution.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
 import { sessionStore } from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
-import { listRecentOffers } from '../db/offers.js';
+import { listAllOffers } from '../db/offers.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -125,7 +126,7 @@ bot.command('admin_offers', async (ctx) => {
     return ctx.reply('403');
   }
 
-  const list = await listRecentOffers(15);
+  const list = await listAllOffers(15);
   if (!list.length) {
     return ctx.reply('Нет офферов');
   }
@@ -209,70 +210,6 @@ bot.use(async (ctx, next) => {
 
 const JOIN_GROUP_EVENT = 'join_group';
 
-async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
-  const normalizedUid = uid ?? null;
-  const params = [clickId, offerId, normalizedUid, tgId];
-  const insertSql = `
-    INSERT INTO attribution (click_id, offer_id, uid, tg_id, state)
-    VALUES ($1, $2, $3, $4, 'started')
-    ON CONFLICT (click_id, tg_id) DO UPDATE
-      SET offer_id = EXCLUDED.offer_id,
-          uid = EXCLUDED.uid,
-          state = EXCLUDED.state,
-          created_at = NOW()
-  `;
-
-  try {
-    await query(insertSql, params);
-    console.log('[ATTR] linked', {
-      click_id: clickId,
-      offer_id: offerId,
-      uid: normalizedUid,
-      tg_id: tgId,
-    });
-    return;
-  } catch (error) {
-    if (error?.code !== '42P10' && error?.code !== '42704') {
-      throw error;
-    }
-  }
-
-  let updated = false;
-  try {
-    const res = await query(
-      `UPDATE attribution SET offer_id=$2, uid=$3, state='started', created_at=NOW()
-       WHERE click_id=$1 AND tg_id=$4`,
-      params,
-    );
-    updated = res.rowCount > 0;
-  } catch (updateError) {
-    if (updateError?.code !== '42703') {
-      throw updateError;
-    }
-    const res = await query(
-      `UPDATE attribution SET offer_id=$2, uid=$3, state='started'
-       WHERE click_id=$1 AND tg_id=$4`,
-      params,
-    );
-    updated = res.rowCount > 0;
-  }
-
-  if (!updated) {
-    await query(
-      `INSERT INTO attribution (click_id, offer_id, uid, tg_id, state)
-       VALUES ($1, $2, $3, $4, 'started')`,
-      params,
-    );
-  }
-
-  console.log('[ATTR] linked', {
-    click_id: clickId,
-    offer_id: offerId,
-    uid: normalizedUid,
-    tg_id: tgId,
-  });
-}
-
 bot.start(async (ctx) => {
   logUpdate(ctx, 'start');
   const payload = typeof ctx.startPayload === 'string' ? ctx.startPayload.trim() : '';
@@ -320,7 +257,7 @@ export async function handleStartWithToken(ctx, rawToken) {
 
   const res = await query(
     `
-    SELECT c.id AS click_id, c.offer_id, c.uid, o.target_url, o.event_type
+    SELECT c.id, c.offer_id, c.uid, o.target_url, o.event_type
     FROM clicks c JOIN offers o ON o.id=c.offer_id
     WHERE c.start_token=$1
     LIMIT 1
@@ -333,11 +270,12 @@ export async function handleStartWithToken(ctx, rawToken) {
     return;
   }
 
-  const { click_id, offer_id, uid, target_url, event_type } = res.rows[0];
+  const click = res.rows[0];
+  const { offer_id, uid, target_url, event_type } = click;
 
   const update = await query(
     `UPDATE clicks SET tg_id=$1, used_at=NOW() WHERE id=$2 AND (tg_id IS NULL OR tg_id=$1)`,
-    [tgId, click_id],
+    [tgId, click.id],
   );
   if (!update.rowCount) {
     console.warn('[tg] start token already used', { token, tgId });
@@ -346,10 +284,16 @@ export async function handleStartWithToken(ctx, rawToken) {
   }
 
   try {
-    await linkAttributionRow({ clickId: click_id, offerId: offer_id, uid, tgId });
+    await attribution.upsertAttribution({
+      user_id: tgId,
+      offer_id,
+      uid: uid ?? '',
+      tg_id: tgId,
+      click_id: click.id,
+    });
   } catch (error) {
-    console.error('[ATTR] failed to link', error?.message || error, {
-      click_id,
+    console.error('[ATTR] failed to upsert', error?.message || error, {
+      click_id: click.id,
       offer_id,
       tg_id: tgId,
     });
@@ -484,15 +428,43 @@ bot.on(['chat_member', 'my_chat_member'], async (ctx) => {
     SELECT click_id, offer_id, uid
     FROM attribution
     WHERE tg_id=$1 AND state='started'
-      AND created_at >= NOW() - INTERVAL '24 hours'
-    ORDER BY created_at DESC LIMIT 1
+      AND last_seen >= NOW() - INTERVAL '24 hours'
+    ORDER BY last_seen DESC LIMIT 1
   `,
     [tgId],
   );
   if (!res.rowCount) return;
 
   const { click_id: attrClickId, offer_id, uid } = res.rows[0];
-  let created = false;
+  const existing = await query(
+    `SELECT id FROM events WHERE offer_id=$1 AND tg_id=$2 AND event_type=$3 LIMIT 1`,
+    [offer_id, tgId, JOIN_GROUP_EVENT],
+  );
+  if (existing.rowCount) {
+    await query(
+      `UPDATE attribution
+          SET state='converted', last_seen = now()
+        WHERE user_id=$1 AND offer_id=$2`,
+      [tgId, offer_id],
+    );
+    return;
+  }
+
+  await query(
+    `INSERT INTO events(offer_id, user_id, uid, tg_id, event_type) VALUES($1,$2,$3,$4,$5)`,
+    [offer_id, tgId, uid ?? '', tgId, JOIN_GROUP_EVENT],
+  );
+  const updated = await query(
+    `UPDATE attribution
+        SET state='converted', last_seen = now(), click_id = COALESCE($3, click_id)
+      WHERE user_id=$1 AND offer_id=$2`,
+    [tgId, offer_id, attrClickId],
+  );
+
+  if (!updated.rowCount) {
+    return;
+  }
+
   try {
     const result = await recordEvent({
       offerId: offer_id,
