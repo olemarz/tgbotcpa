@@ -39,7 +39,7 @@ function normalizeGeoForInsert(geo) {
   return { list: list.length ? list : null, input: geoInput };
 }
 
-export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
+export async function finalizeOfferAndInvoiceStars(ctx, form = {}, options = {}) {
   const columns = await getOfferColumns();
   const tgId = ctx.from?.id ?? null;
 
@@ -203,8 +203,9 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
   const payoutInStars = Math.max(1, Math.ceil(centsToXtr(payoutAdjusted)));
 
   const starsEnabled = String(process.env.STARS_ENABLED || '').toLowerCase() === 'true';
+  const skipPayment = options?.skipPayment === true;
 
-  if (starsEnabled) {
+  if (starsEnabled && !skipPayment) {
     await sendStarsInvoice(ctx, {
       title: `Оплата оффера: ${offer.title || offer.id}`,
       description: `Бюджет: ${amountInStars} ⭐️. Payout: ${payoutInStars} ⭐️.`,
