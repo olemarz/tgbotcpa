@@ -6,28 +6,85 @@ import { uuid } from '../util/id.js';
 
 const DEFAULT_TIMEOUT_MS = 4000;
 
-const buildIdempotencyKey = (offerId, tgId, event) => `${offerId}:${tgId}:${event}`;
+const buildIdempotencyKey = (offerId, tgId, eventType) => `${offerId}:${tgId}:${eventType}`;
 
-async function recordPostback({ offer_id, tg_id, uid, event, httpStatus, status, error }) {
+function toBase64Url(input) {
+  return Buffer.from(input, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function normalizePayload(payload) {
+  if (payload === undefined || payload === null) {
+    return null;
+  }
+  if (typeof payload === 'string') {
+    return payload;
+  }
   try {
+    const json = JSON.stringify(payload);
+    return toBase64Url(json);
+  } catch (error) {
+    console.warn('[postback] failed to encode payload as base64url', error?.message || error);
+    return null;
+  }
+}
+
+async function recordPostback({
+  offer_id,
+  event_id,
+  event_type,
+  tg_id,
+  uid,
+  payload,
+  httpStatus,
+  status,
+  error,
+  attempt = 1,
+}) {
+  try {
+    const normalizedPayload = normalizePayload(payload);
     await query(
-      `INSERT INTO postbacks (id, offer_id, tg_id, uid, event, http_status, status, error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [uuid(), offer_id, tg_id, uid ?? null, event, httpStatus ?? null, status, error ?? null]
+      `INSERT INTO postbacks (id, offer_id, event_id, tg_id, uid, event_type, payload, http_status, status, error, attempt)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)` ,
+      [
+        uuid(),
+        offer_id,
+        event_id,
+        tg_id ?? null,
+        uid ?? null,
+        event_type ?? null,
+        normalizedPayload,
+        httpStatus ?? null,
+        status,
+        error ?? null,
+        attempt,
+      ]
     );
   } catch (insertError) {
     console.error('postbacks insert error', insertError);
   }
 }
 
-export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payout_cents }) {
-  if (!offer_id || !tg_id || !event) {
-    throw new Error('offer_id, tg_id and event are required for postback');
+export async function sendPostback({
+  offer_id,
+  event_id,
+  event_type,
+  tg_id,
+  uid,
+  click_id,
+  payout_cents,
+  payload: eventPayload,
+}) {
+  if (!offer_id || !event_id || !event_type || !tg_id) {
+    throw new Error('offer_id, event_id, event_type and tg_id are required for postback');
   }
 
   const timestamp = new Date().toISOString();
-  const payload = {
-    event,
+  const body = {
+    event_type,
     offer_id,
     tg_id,
     uid: uid ?? null,
@@ -36,15 +93,30 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
   };
 
   if (typeof payout_cents === 'number' && Number.isFinite(payout_cents)) {
-    payload.payout_cents = payout_cents;
+    body.payout_cents = payout_cents;
   }
 
-  const payloadJson = JSON.stringify(payload);
+  const encodedEventPayload = normalizePayload(eventPayload);
+  if (encodedEventPayload) {
+    body.payload = encodedEventPayload;
+  }
+
+  const payloadJson = JSON.stringify(body);
   const signature = hmacSHA256Hex(payloadJson, config.cpaSecret || '');
 
-  const idempotencyKey = buildIdempotencyKey(offer_id, tg_id, event);
+  const idempotencyKey = buildIdempotencyKey(offer_id, tg_id, event_type);
   if (isDupe(idempotencyKey)) {
-    await recordPostback({ offer_id, tg_id, uid, event, status: 'dedup' });
+    await recordPostback({
+      offer_id,
+      event_id,
+      event_type,
+      tg_id,
+      uid,
+      payload: encodedEventPayload,
+      status: 'dedup',
+      attempt: 0,
+    });
+    console.log('[POSTBACK]', { status: 'dedup', attempt: 0 });
     return { ok: true, dedup: true, signature, status: null, http_status: null };
   }
 
@@ -52,7 +124,17 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
 
   if (!config.cpaPostbackUrl) {
     remember(idempotencyKey, config.idempotencyTtlSec);
-    await recordPostback({ offer_id, tg_id, uid, event, status: 'dry-run' });
+    await recordPostback({
+      offer_id,
+      event_id,
+      event_type,
+      tg_id,
+      uid,
+      payload: encodedEventPayload,
+      status: 'dry-run',
+      attempt: 0,
+    });
+    console.log('[POSTBACK]', { status: 'dry-run', attempt: 0 });
     return { ok: true, dryRun: true, signature, status: null, http_status: null };
   }
 
@@ -79,12 +161,33 @@ export async function sendPostback({ offer_id, tg_id, uid, click_id, event, payo
     }
 
     remember(idempotencyKey, config.idempotencyTtlSec);
-    await recordPostback({ offer_id, tg_id, uid, event, httpStatus, status: 'sent' });
-    console.log('postback sent', { offer_id, tg_id, event, httpStatus });
+    await recordPostback({
+      offer_id,
+      event_id,
+      event_type,
+      tg_id,
+      uid,
+      payload: encodedEventPayload,
+      httpStatus,
+      status: 'sent',
+    });
+    console.log('postback sent', { offer_id, tg_id, event_type, httpStatus });
+    console.log('[POSTBACK]', { status: 'sent', attempt: 1 });
     return { ok: true, status: httpStatus ?? null, http_status: httpStatus ?? null, signature };
   } catch (error) {
-    await recordPostback({ offer_id, tg_id, uid, event, httpStatus, status: 'failed', error: error?.message });
-    console.error('postback send failed', { offer_id, tg_id, event, error: error?.message });
+    await recordPostback({
+      offer_id,
+      event_id,
+      event_type,
+      tg_id,
+      uid,
+      payload: encodedEventPayload,
+      httpStatus,
+      status: 'failed',
+      error: error?.message,
+    });
+    console.error('postback send failed', { offer_id, tg_id, event_type, error: error?.message });
+    console.log('[POSTBACK]', { status: 'failed', attempt: 1 });
     throw error;
   } finally {
     clearTimeout(timeout);

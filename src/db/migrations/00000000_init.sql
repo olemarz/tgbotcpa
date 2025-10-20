@@ -80,12 +80,15 @@ CREATE INDEX IF NOT EXISTS idx_events_offer ON events(offer_id, created_at DESC)
 CREATE TABLE IF NOT EXISTS postbacks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   offer_id uuid NOT NULL,
-  tg_id bigint NOT NULL,
+  event_id uuid NOT NULL REFERENCES events(id),
+  tg_id bigint,
   uid text,
-  event text NOT NULL,
+  event_type text,
+  payload text,
   http_status int,
   status text,
   error text,
+  attempt int NOT NULL DEFAULT 1,
   created_at timestamptz DEFAULT now()
 );
 

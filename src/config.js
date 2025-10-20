@@ -136,6 +136,11 @@ export function buildConfig(env = process.env) {
 
   const linkCaptureDisabled = (trim(env.DISABLE_LINK_CAPTURE) || '').toLowerCase() === 'true';
 
+  const adminChatId = (() => {
+    const raw = trim(env.ADMIN_CHAT_ID);
+    return raw && raw.length ? raw : null;
+  })();
+
   return {
     botToken,
     baseUrl,
@@ -158,6 +163,7 @@ export function buildConfig(env = process.env) {
     adsMasters,
     linkCaptureDisabled,
     geoMarkupPercent: GEO_MARKUP_MAP,
+    adminChatId,
   };
 }
 

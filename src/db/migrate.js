@@ -11,10 +11,14 @@ const __dirname = path.dirname(__filename);
 const migrationsDir = path.join(__dirname, 'migrations');
 const seedsDir = path.join(__dirname, 'seeds');
 
-async function applyMigrationsWithClient(client) {
+async function applyMigrationsWithClient(client, { skip = new Set() } = {}) {
   await client.query('CREATE TABLE IF NOT EXISTS _migrations(id text primary key, applied_at timestamptz default now())');
   const files = fs.existsSync(migrationsDir) ? fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort() : [];
   for (const file of files) {
+    if (skip.has(file)) {
+      console.warn('[migrate] skipping', file, 'for in-memory database');
+      continue;
+    }
     const done = await client.query('SELECT 1 FROM _migrations WHERE id=$1', [file]);
     if (done.rowCount) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
@@ -65,7 +69,11 @@ export async function runMigrations() {
   if (connectionString.startsWith('pgmem://')) {
     const client = await pool.connect();
     try {
-      await applyMigrationsWithClient(client);
+      const skip = new Set(['2025xxxx_core.sql']);
+      await applyMigrationsWithClient(client, { skip });
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uniq_attr_click_tg ON attribution(click_id, tg_id)`
+      );
       await applySeedsWithClient(client);
       console.log('Migration complete');
     } finally {

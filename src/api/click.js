@@ -5,7 +5,6 @@ import { query } from '../db/index.js';
 import { shortToken, uuid } from '../util/id.js';
 
 const UUID_REGEXP = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 const CLICK_TOKEN_RETRIES = 5;
 
 let clickColumnsPromise;
@@ -38,6 +37,18 @@ function normalizeOptional(value) {
   return trimmed.length ? trimmed : null;
 }
 
+function normalizeIpValue(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) {
+    return mapped[1];
+  }
+  return value;
+}
+
+function normalizeOfferId(raw) {
 async function resolveOfferId(raw) {
   const value = typeof raw === 'string' ? raw.trim() : '';
   if (!value) {
@@ -167,6 +178,8 @@ async function insertClickRow({
         `INSERT INTO clicks (${insertColumns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`,
         values,
       );
+      const insertedId = result.rows[0]?.id ?? null;
+      return { token, clickId: insertedId };
       const insertedId = result?.rows?.[0]?.id ?? generatedClickId;
       return { startToken: token, clickId: insertedId ?? null };
     } catch (error) {
@@ -211,7 +224,7 @@ export async function handleClick(req, res) {
   const source = normalizeOptional(req.query?.source);
   const sub1 = normalizeOptional(req.query?.sub1);
   const sub2 = normalizeOptional(req.query?.sub2);
-  const ip = normalizeOptional(requestIp.getClientIp(req));
+  const ip = normalizeOptional(normalizeIpValue(requestIp.getClientIp(req)));
   const userAgent = normalizeOptional(req.get('user-agent'));
   const referer = normalizeOptional(req.get('referer') || req.get('referrer'));
 
@@ -228,6 +241,8 @@ export async function handleClick(req, res) {
       userAgent,
       referer,
     });
+    startToken = inserted.token;
+    clickRowId = inserted.clickId;
   } catch (error) {
     if (error?.code === '23503') {
       res.status(404).json({ ok: false, error: 'offer not found' });
@@ -257,6 +272,12 @@ export async function handleClick(req, res) {
     click_id: externalClickId,
     start_token: startToken,
     stored_click_id: clickId,
+  });
+
+  console.log('[ATTR] linked', {
+    offer_id: offerId,
+    click_id: clickRowId ?? null,
+    tg_id: null,
   });
 
   const redirectUrl = buildTelegramStartLink(botUsername, startToken);

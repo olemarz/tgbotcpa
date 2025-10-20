@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS postbacks (
   status_code integer,
   response_ms integer,
   response_body text,
+  payload text,
+  event_type text,
   attempt integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now()
 );

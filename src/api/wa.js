@@ -69,17 +69,17 @@ waRouter.post('/claim', async (req, res) => {
 
 waRouter.post('/debug/complete', requireDebug, async (req, res) => {
   const token = toTrimmedString(req.body?.token);
-  const event = toTrimmedString(req.body?.event);
+  const eventType = toTrimmedString(req.body?.event_type || req.body?.event);
 
   if (!token) {
     return res.status(400).json({ ok: false, error: 'TOKEN_REQUIRED' });
   }
 
-  if (!event) {
+  if (!eventType) {
     return res.status(400).json({ ok: false, error: 'EVENT_REQUIRED' });
   }
 
-  if (event !== JOIN_GROUP_EVENT) {
+  if (eventType !== JOIN_GROUP_EVENT) {
     return res.status(400).json({ ok: false, error: 'UNSUPPORTED_EVENT' });
   }
 
@@ -122,8 +122,8 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       return res.status(409).json({ ok: false, error: 'TG_ID_INVALID' });
     }
 
-    if (offerEvent && offerEvent !== event) {
-      console.warn('[wa.debugComplete] event mismatch', { token, offer_event: offerEvent, event });
+    if (offerEvent && offerEvent !== eventType) {
+      console.warn('[wa.debugComplete] event mismatch', { token, offer_event: offerEvent, event_type: eventType });
     }
 
     const existingEvent = await query(

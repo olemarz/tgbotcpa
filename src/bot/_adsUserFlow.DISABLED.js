@@ -354,6 +354,8 @@ async function registerJoinConversion({ offerId, tgId, attribution }) {
     [offerId, tgId, JOIN_GROUP_EVENT]
   );
   if (existingEvent.rowCount) {
+    const eventId = existingEvent.rows[0].id;
+    console.log('[EVENT] saved', { event_id: eventId, event_type: JOIN_GROUP_EVENT, offer_id: offerId, tg_id: tgId });
     return { already: true };
   }
 
@@ -371,10 +373,11 @@ async function registerJoinConversion({ offerId, tgId, attribution }) {
   try {
     await sendPostback({
       offer_id: offerId,
+      event_id: eventId,
+      event_type: JOIN_GROUP_EVENT,
       tg_id: tgId,
       uid: attribution.uid ?? null,
       click_id: attribution.click_id ?? null,
-      event: JOIN_GROUP_EVENT,
     });
   } catch (error) {
     console.error('[adsUserFlow] postback error', error?.message || error);

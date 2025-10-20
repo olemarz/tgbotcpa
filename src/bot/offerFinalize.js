@@ -1,7 +1,9 @@
 import { query } from '../db/index.js';
+import { config } from '../config.js';
 import { adjustPayoutCents } from '../util/pricing.js';
 import { centsToXtr } from '../util/xtr.js';
 import { replyHtml } from './html.js';
+import { buildTrackingUrl } from '../utils/tracking-link.js';
 import { sendStarsInvoice } from './paymentsStars.js';
 
 let offersColumnsPromise;
@@ -165,6 +167,30 @@ export async function finalizeOfferAndInvoiceStars(ctx, form = {}) {
       ? row.budget_xtr ?? normalizedBudgetXtr
       : normalizedBudgetXtr,
   };
+
+  const adminChatId = config.adminChatId || process.env.ADMIN_CHAT_ID || null;
+  const baseUrl = config.baseUrl || process.env.BASE_URL || '';
+  const trackingUid = ctx.from?.id ?? null;
+  let trackingUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/click/${offer.id}` : `/click/${offer.id}`;
+
+  if (trackingUid != null) {
+    const uidParam = encodeURIComponent(String(trackingUid));
+    trackingUrl = trackingUrl.includes('?') ? `${trackingUrl}&uid=${uidParam}` : `${trackingUrl}?uid=${uidParam}`;
+  }
+
+  try {
+    trackingUrl = buildTrackingUrl({ baseUrl, offerId: offer.id, uid: trackingUid ?? undefined });
+  } catch (error) {
+    console.error('[offerFinalize] failed to build tracking url', { offerId: offer.id, error: error?.message });
+  }
+
+  if (adminChatId && ctx?.telegram?.sendMessage) {
+    const offerTitle = offer.title || offer.id;
+    const message = `🆕 Новый оффер ${offerTitle}: ${trackingUrl}`;
+    ctx.telegram
+      .sendMessage(adminChatId, message, { disable_web_page_preview: true })
+      .catch((error) => console.error('[offerFinalize] failed to notify admin', error?.message || error));
+  }
 
   const amountInStars = Math.max(1, Math.ceil(offer.budget_xtr || centsToXtr(offer.budget_cents)));
   const payoutInStars = Math.max(1, Math.ceil(centsToXtr(payoutAdjusted)));
