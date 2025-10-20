@@ -9,7 +9,7 @@ import { joinCheck } from '../services/joinCheck.js';
 import * as attribution from '../services/attribution.js';
 import { uuid, shortToken } from '../util/id.js';
 import { registerStatHandlers } from './stat.js';
-import { sessionStore } from './sessionStore.js';
+import sessionStore from './sessionStore.js';
 import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
