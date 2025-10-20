@@ -377,27 +377,32 @@ bot.command('admin_postbacks_retry', async (ctx) => {
         return `🚫 ${idx + 1}. <code>${entry.postbackId}</code> — ошибка: <code>${entry.error}</code>`;
       }
 
-      if (entry.skipped) {
+      const normalizedStatusText = typeof entry.statusText === 'string' ? entry.statusText.toLowerCase() : null;
+      const isHttpSuccess = typeof entry.status === 'number' && entry.status >= 200 && entry.status < 300;
+      const isStatusSuccess = normalizedStatusText === 'sent';
+      const isStatusSkipped = normalizedStatusText === 'dry-run' || normalizedStatusText === 'dedup';
+      const isSkipped = entry.skipped || isStatusSkipped;
+      const isSuccess = isHttpSuccess || (!entry.skipped && isStatusSuccess);
+
+      if (entry.skipped || isStatusSkipped) {
         stats.skipped += 1;
-      } else if (typeof entry.status === 'number' && entry.status >= 200 && entry.status < 300) {
+      } else if (isSuccess) {
         stats.success += 1;
       } else {
         stats.failed += 1;
       }
 
-      const prefix = entry.error
-        ? '🚫'
-        : entry.skipped
-        ? '⚠️'
-        : typeof entry.status === 'number' && entry.status >= 200 && entry.status < 300
-        ? '✅'
-        : '❌';
+      const prefix = entry.error ? '🚫' : isSkipped ? '⚠️' : isSuccess ? '✅' : '❌';
 
-      const statusLabel = entry.skipped
-        ? 'skipped'
-        : entry.status == null
-        ? 'null'
-        : String(entry.status);
+      const statusLabel = isSkipped
+        ? normalizedStatusText || 'skipped'
+        : entry.status != null && entry.statusText
+        ? `${entry.status} (${entry.statusText})`
+        : entry.status != null
+        ? String(entry.status)
+        : entry.statusText
+        ? entry.statusText
+        : 'null';
 
       const attemptLabel = entry.previousAttempt
         ? `${entry.previousAttempt}→${entry.attempt}`

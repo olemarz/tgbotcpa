@@ -101,6 +101,8 @@ describe('retryFailedPostbacksForSlug', () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.retries.length, 1);
+    assert.equal(result.retries[0].status, 200);
+    assert.equal(result.retries[0].statusText, 'sent');
     assert.equal(calls.length, 1);
     assert.ok(calls[0].startsWith('https://collector.test/postback'));
 

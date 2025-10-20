@@ -1,7 +1,9 @@
 import { query } from '../db/index.js';
-import { sendPostbackForEvent } from '../utils/postbackSender.js';
+import { sendPostbackForEvent } from './postback.js';
 
-const FAILED_STATUS_CONDITION =
+const FAILED_HTTP_STATUS_CONDITION =
+  '(http_status IS NULL OR http_status < 200 OR http_status >= 300)';
+const FAILED_LEGACY_STATUS_CONDITION =
   '(status_code IS NULL OR status_code < 200 OR status_code >= 300)';
 
 function sanitizeLimit(limit) {
@@ -42,23 +44,25 @@ export async function retryFailedPostbacksForSlug({ slug, limit = 5 }) {
   const limitValue = sanitizeLimit(limit);
 
   let postbacksResult;
+  let legacySchema = false;
   try {
     postbacksResult = await query(
-      `SELECT id, event_id, attempt, status_code, created_at
+      `SELECT id, event_id, attempt, http_status, status, error, created_at
          FROM postbacks
         WHERE offer_id = $1
-          AND ${FAILED_STATUS_CONDITION}
+          AND ${FAILED_HTTP_STATUS_CONDITION}
         ORDER BY created_at DESC
         LIMIT $2`,
       [offer.id, limitValue],
     );
   } catch (error) {
     if (error?.code === '42703') {
+      legacySchema = true;
       postbacksResult = await query(
         `SELECT id, event_id, attempt, http_status AS status_code, created_at
            FROM postbacks
           WHERE offer_id = $1
-            AND (http_status IS NULL OR http_status < 200 OR http_status >= 300)
+            AND ${FAILED_LEGACY_STATUS_CONDITION}
           ORDER BY created_at DESC
           LIMIT $2`,
         [offer.id, limitValue],
@@ -80,6 +84,14 @@ export async function retryFailedPostbacksForSlug({ slug, limit = 5 }) {
 
   for (const row of postbacksResult.rows) {
     const nextAttempt = (Number(row.attempt) || 1) + 1;
+
+    const statusCode =
+      typeof row.http_status === 'number'
+        ? row.http_status
+        : typeof row.status_code === 'number'
+        ? row.status_code
+        : null;
+    const statusText = legacySchema ? null : row.status ?? null;
 
     if (!row.event_id) {
       retries.push({
@@ -153,13 +165,21 @@ export async function retryFailedPostbacksForSlug({ slug, limit = 5 }) {
       attempt: nextAttempt,
     });
 
+    let attemptStatusText = statusText;
+    if (result?.skipped) {
+      attemptStatusText = 'skipped';
+    } else if (typeof result?.status === 'number') {
+      attemptStatusText = result.status >= 200 && result.status < 300 ? 'sent' : 'failed';
+    }
+
     retries.push({
       postbackId: row.id,
       eventId: event.id,
       tgId: event.tg_id,
       previousAttempt: row.attempt ?? null,
       attempt: nextAttempt,
-      status: result?.status ?? null,
+      status: result?.status ?? statusCode,
+      statusText: attemptStatusText,
       url: result?.url ?? null,
       skipped: !!result?.skipped,
     });
