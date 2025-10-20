@@ -5,6 +5,7 @@ import requestIp from 'request-ip';
 import { config } from '../config.js';
 import { query } from '../db/index.js';
 import { uuid } from '../util/id.js';
+import { isIpInBlockedSubnet } from '../services/antifraud.js';
 import { isAllowedByGeo } from '../utils/geo.js';
 import { buildStartDeepLink } from '../utils/tracking-link.js';
 
@@ -104,6 +105,7 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
   const ip = normalizeIp(ipRaw);
   const lookup = ip ? geoip.lookup(ip) : null;
   const country = lookup?.country ?? null;
+  const suspectIp = ip ? isIpInBlockedSubnet(ip) : false;
 
   if (!isAllowedByGeo(country, geoMode, geoList)) {
     console.info('click blocked by geo', {
@@ -121,10 +123,12 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
   const clickRowId = uuid();
   const ua = req.get('user-agent') || null;
 
+  const meta = suspectIp ? { suspect_ip: true } : {};
+
   try {
     await query(
-      `INSERT INTO clicks (id, offer_id, uid, click_id, source, sub1, sub2, start_token, ip, ua)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO clicks (id, offer_id, uid, click_id, source, sub1, sub2, start_token, ip, ua, meta)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         clickRowId,
         offerId,
@@ -136,6 +140,7 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
         startToken,
         ip ?? null,
         ua,
+        JSON.stringify(meta),
       ],
     );
   } catch (error: any) {
@@ -157,6 +162,7 @@ export async function handleClick(req: Request, res: Response): Promise<void> {
     click_id: externalClickId,
     start_token: startToken,
     country,
+    suspect_ip: suspectIp || undefined,
   });
 
   const link = buildStartDeepLink({ botUsername, token: startToken });

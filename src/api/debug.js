@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db/pool.js';
 import { v4 as uuid } from 'uuid';
 import { sendPostbackForEvent } from '../services/postback.js';
+import { propagateSuspectAttributionMeta } from '../services/antifraud.js';
 
 const router = Router();
 const q = (s, p=[]) => pool.query(s, p);
@@ -30,6 +31,8 @@ router.get('/debug/sim-start', async (req, res) => {
         state='started',
         last_seen = now()
     `, [tgId, click.offer_id, click.uid || null, tgId, click.id]);
+
+    await propagateSuspectAttributionMeta({ clickId: click.id, offerId: click.offer_id, tgId });
 
     res.json({ ok:true, offer_id: click.offer_id, tg_id: tgId, click_id: click.id });
   } catch (e) {

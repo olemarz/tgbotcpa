@@ -2,6 +2,7 @@ import express from 'express';
 import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
 import { recordEvent } from '../services/events.js';
+import { propagateSuspectAttributionMeta } from '../services/antifraud.js';
 import { verifyInitData } from '../utils/tgInitData.js';
 
 const JOIN_GROUP_EVENT = 'join_group';
@@ -150,6 +151,8 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
               last_seen = now()`,
       [numericTgId, offerId, uid ?? '', numericTgId, clickUuid],
     );
+
+    await propagateSuspectAttributionMeta({ clickId: clickUuid, offerId, tgId: numericTgId });
 
     try {
       const result = await recordEvent({

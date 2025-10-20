@@ -15,6 +15,12 @@ import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
 import { listAllOffers } from '../db/offers.js';
 import { sendPostbackForEvent } from '../services/postback.js';
+import {
+  hasSuspectAttribution,
+  shouldBlockPrimaryEvent,
+  shouldDebounceReaction,
+  propagateSuspectAttributionMeta,
+} from '../services/antifraud.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -199,9 +205,34 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
     uid: context.uid ?? undefined,
   });
 
+  const offerId = context.offerId;
+
+  if (await hasSuspectAttribution({ offerId, tgId, clickId: context.clickId ?? null })) {
+    console.warn('[EVENT] skipped suspect attribution', { offer_id: offerId, tg_id: tgId, event_type: eventType });
+    return;
+  }
+
+  if (await shouldBlockPrimaryEvent({ offerId, tgId, eventType })) {
+    console.warn('[EVENT] primary cap reached', { offer_id: offerId, tg_id: tgId, event_type: eventType });
+    return;
+  }
+
+  if (
+    eventType === 'reaction' &&
+    (await shouldDebounceReaction({ offerId, tgId, messageId: eventPayload?.message_id ?? null }))
+  ) {
+    console.warn('[EVENT] reaction debounced', {
+      offer_id: offerId,
+      tg_id: tgId,
+      event_type: eventType,
+      message_id: eventPayload?.message_id ?? null,
+    });
+    return;
+  }
+
   const inserted = await withEventError(`insertEvent:${eventType}`, () =>
     insertEvent({
-      offer_id: context.offerId,
+      offer_id: offerId,
       user_id: context.userId ?? tgId,
       tg_id: tgId,
       event_type: eventType,
@@ -396,14 +427,10 @@ async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
           created_at = NOW()
   `;
 
+  let linked = false;
   try {
     await query(insertSql, params);
-    console.log('[ATTR] linked', {
-      offer_id: offerId,
-      click_id: clickId,
-      tg_id: tgId,
-    });
-    return;
+    linked = true;
   } catch (error) {
     if (error?.code !== '42P10' && error?.code !== '42704') {
       throw error;
@@ -436,13 +463,17 @@ async function linkAttributionRow({ clickId, offerId, uid, tgId }) {
        VALUES ($1, $2, $3, $4, 'started')`,
       params,
     );
+    linked = true;
   }
 
-  console.log('[ATTR] linked', {
-    offer_id: offerId,
-    click_id: clickId,
-    tg_id: tgId,
-  });
+  if (linked || updated) {
+    await propagateSuspectAttributionMeta({ clickId, offerId, tgId });
+    console.log('[ATTR] linked', {
+      offer_id: offerId,
+      click_id: clickId,
+      tg_id: tgId,
+    });
+  }
 }
 
 bot.start(async (ctx) => {

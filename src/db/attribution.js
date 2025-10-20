@@ -1,4 +1,5 @@
 import pool from './pool.js';
+import { propagateSuspectAttributionMeta } from '../services/antifraud.js';
 
 const UPDATE_COLUMNS = ['uid', 'tg_id'];
 
@@ -12,10 +13,12 @@ export async function upsertAttribution({ user_id, offer_id, uid, tg_id = null, 
         SET ${UPDATE_COLUMNS.map((column) => `${column} = EXCLUDED.${column}`).join(', ')},
             click_id = COALESCE(EXCLUDED.click_id, attribution.click_id),
             last_seen = now()
-     RETURNING user_id, offer_id, uid, tg_id, is_premium, first_seen, last_seen, click_id, state, created_at`,
+      RETURNING user_id, offer_id, uid, tg_id, is_premium, first_seen, last_seen, click_id, state, created_at`,
     values,
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0] ?? null;
+  await propagateSuspectAttributionMeta({ clickId: click_id, offerId: offer_id, tgId: tg_id });
+  return row;
 }
 
 export async function attachEvent({ user_id, offer_id }) {
