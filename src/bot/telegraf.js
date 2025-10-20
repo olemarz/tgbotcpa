@@ -14,7 +14,7 @@ import { adsWizardScene, startAdsWizard } from './adsWizard.js';
 import { ensureBotSelf } from './self.js';
 import { replyHtml } from './html.js';
 import { listAllOffers } from '../db/offers.js';
-import { sendPostback } from '../utils/postbackSender.js';
+import { sendPostbackForEvent } from '../utils/postbackSender.js';
 
 console.log('[BOOT] telegraf init');
 
@@ -222,8 +222,8 @@ async function handleEvent(ctx, eventType, payload = {}, options = {}) {
     }),
   );
 
-  await withEventError(`sendPostback:${eventType}`, () =>
-    sendPostback({
+  await withEventError(`sendPostbackForEvent:${eventType}`, () =>
+    sendPostbackForEvent({
       offerId: context.offerId,
       eventType,
       tgId,
