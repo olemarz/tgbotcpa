@@ -16,6 +16,9 @@ function isAdmin(req) {
 }
 
 const app = express();
+import debugRouter from './debug.js';
+app.use(express.json());
+app.use(debugRouter);
 const PORT = Number(process.env.PORT || 8000);
 const RAW = process.env.WEBHOOK_PATH || '/bot/webhook';
 const WEBHOOK_PATH = RAW.replace(/\/+$/, ''); // без завершающего '/'
