@@ -3,7 +3,6 @@ import pool from '../db/pool.js';
 import { v4 as uuid } from 'uuid';
 import { sendPostbackForEvent } from '../services/postback.js';
 import { notifyOfferCapsIfNeeded } from '../services/offerCaps.js';
-import { bot } from '../bot/telegraf.js';
 
 const router = Router();
 const q = (s, p=[]) => pool.query(s, p);
@@ -57,7 +56,7 @@ router.post('/debug/event', async (req, res) => {
       [evId, offerId, tgId, null, tgId, ev, payload]
     );
     try {
-      await notifyOfferCapsIfNeeded({ offerId, telegram: bot?.telegram });
+      await notifyOfferCapsIfNeeded({ offerId });
     } catch (notifyError) {
       console.error('[DEBUG event] caps notify error', notifyError?.message || notifyError);
     }

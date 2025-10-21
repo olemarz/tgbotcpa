@@ -5,7 +5,6 @@ import { fileURLToPath } from 'url';
 import { query } from '../db/index.js';
 import { sendPostback } from '../services/postback.js';
 import { notifyOfferCapsIfNeeded } from '../services/offerCaps.js';
-import { bot } from '../bot/telegraf.js';
 import { parseGeoInput } from '../util/geo.js';
 import { uuid } from '../util/id.js';
 import { handleClick } from './click.js';
@@ -167,7 +166,7 @@ export function createApp() {
         [offer_id, tg_id, event_type],
       );
       try {
-        await notifyOfferCapsIfNeeded({ offerId: offer_id, telegram: bot.telegram });
+        await notifyOfferCapsIfNeeded({ offerId: offer_id });
       } catch (notifyError) {
         console.error('[debug.complete] caps notify error', notifyError?.message || notifyError);
       }

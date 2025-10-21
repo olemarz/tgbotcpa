@@ -1,5 +1,4 @@
 import express from 'express';
-import { bot } from '../bot/telegraf.js';
 import { query } from '../db/index.js';
 import { recordEvent } from '../services/events.js';
 import { notifyOfferCapsIfNeeded } from '../services/offerCaps.js';
@@ -52,10 +51,17 @@ waRouter.post('/claim', async (req, res) => {
     );
 
     if (result.rowCount > 0) {
-      try {
-        await bot.telegram.sendMessage(tgId, 'Новая задача доступна: /ads');
-      } catch (notifyError) {
-        console.error('[wa.claim] notify error', notifyError);
+      const module = await import('../bot/telegraf.js').catch((error) => {
+        console.error('[wa.claim] bot load error', error);
+        return null;
+      });
+      const telegram = module?.bot?.telegram;
+      if (telegram?.sendMessage) {
+        try {
+          await telegram.sendMessage(tgId, 'Новая задача доступна: /ads');
+        } catch (notifyError) {
+          console.error('[wa.claim] notify error', notifyError);
+        }
       }
 
       return res.json({ ok: true });
@@ -138,7 +144,7 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
         [offerId, numericTgId, uid ?? '', numericTgId, eventType],
       );
       try {
-        await notifyOfferCapsIfNeeded({ offerId, telegram: bot?.telegram });
+        await notifyOfferCapsIfNeeded({ offerId });
       } catch (notifyError) {
         console.error('[wa.debugComplete] caps notify error', notifyError);
       }

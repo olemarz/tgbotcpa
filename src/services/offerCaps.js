@@ -3,6 +3,14 @@ import { config } from '../config.js';
 
 export const OFFER_CAPS_INCREASE_CALLBACK_PREFIX = 'offer_caps_increase:';
 
+let defaultTelegram = null;
+
+export function registerCapsTelegramClient(telegram) {
+  if (telegram && typeof telegram.sendMessage === 'function') {
+    defaultTelegram = telegram;
+  }
+}
+
 function buildOfferName(row) {
   return row.slug || row.title || row.name || row.id;
 }
@@ -135,7 +143,7 @@ export async function notifyOfferCapsIfNeeded({ offerId, telegram }) {
     disable_web_page_preview: true,
   };
 
-  const tgClient = telegram ?? null;
+  const tgClient = telegram ?? defaultTelegram ?? null;
 
   async function sendIfPossible(chatId, text) {
     if (!chatId || !tgClient?.sendMessage) {

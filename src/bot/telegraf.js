@@ -19,6 +19,7 @@ import {
   notifyOfferCapsIfNeeded,
   OFFER_CAPS_INCREASE_CALLBACK_PREFIX,
   fetchOfferForIncrease,
+  registerCapsTelegramClient,
 } from '../services/offerCaps.js';
 import { centsToXtr } from '../util/xtr.js';
 import { sendStarsInvoice } from './paymentsStars.js';
@@ -41,6 +42,8 @@ export const bot = new Telegraf(BOT_TOKEN, {
     agent,
   },
 });
+
+registerCapsTelegramClient(bot.telegram);
 
 await ensureBotSelf(bot);
 

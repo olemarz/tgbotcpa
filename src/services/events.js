@@ -2,7 +2,6 @@ import { query } from '../db/index.js';
 import { attachEvent } from './attribution.js';
 import { sendPostback } from './postback.js';
 import { notifyOfferCapsIfNeeded } from './offerCaps.js';
-import { bot } from '../bot/telegraf.js';
 
 const ALLOWED_EVENT_TYPES = new Set([
   'join_group',
@@ -118,7 +117,7 @@ export async function recordEvent({
 
   if (inserted?.id) {
     try {
-      await notifyOfferCapsIfNeeded({ offerId, telegram: bot?.telegram });
+      await notifyOfferCapsIfNeeded({ offerId });
     } catch (error) {
       console.error('[events] caps notify error', error?.message || error);
     }
