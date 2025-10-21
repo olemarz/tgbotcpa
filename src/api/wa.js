@@ -129,16 +129,16 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
 
     const existingEvent = await query(
       `SELECT id FROM events WHERE offer_id = $1 AND tg_id = $2 AND event_type = $3 LIMIT 1`,
-      [offerId, numericTgId, event],
+      [offerId, numericTgId, eventType],
     );
 
     if (!existingEvent.rowCount) {
       await query(
         `INSERT INTO events (offer_id, user_id, uid, tg_id, event_type) VALUES ($1, $2, $3, $4, $5)`,
-        [offerId, numericTgId, uid ?? '', numericTgId, event],
+        [offerId, numericTgId, uid ?? '', numericTgId, eventType],
       );
       try {
-        await notifyOfferCapsIfNeeded({ offerId, telegram: bot.telegram });
+        await notifyOfferCapsIfNeeded({ offerId, telegram: bot?.telegram });
       } catch (notifyError) {
         console.error('[wa.debugComplete] caps notify error', notifyError);
       }
@@ -161,7 +161,7 @@ waRouter.post('/debug/complete', requireDebug, async (req, res) => {
       const result = await recordEvent({
         offerId,
         tgId: numericTgId,
-        eventType: event,
+        eventType,
         payload: {
           source: 'wa.debug_complete',
           token,

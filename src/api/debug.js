@@ -57,7 +57,7 @@ router.post('/debug/event', async (req, res) => {
       [evId, offerId, tgId, null, tgId, ev, payload]
     );
     try {
-      await notifyOfferCapsIfNeeded({ offerId, telegram: bot.telegram });
+      await notifyOfferCapsIfNeeded({ offerId, telegram: bot?.telegram });
     } catch (notifyError) {
       console.error('[DEBUG event] caps notify error', notifyError?.message || notifyError);
     }
